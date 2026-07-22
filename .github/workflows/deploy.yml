@@ -1,0 +1,57 @@
+# フロントの配信物を S3 へ同期し、CloudFront のキャッシュを無効化する。
+#
+# 認証は OIDC。長期キーは持たない。引き受けるロールは hakusoft-infra 側で
+# 定義されており、このリポジトリの main ブランチからのみ引き受け可能。
+#
+# いまはビルド工程がなく frontend/ をそのまま同期する。ビルダー（Vite 等）を
+# 入れる段になったら、sync の前にビルドステップを足し、同期元を dist/ に変える。
+
+name: deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch: {}
+
+permissions:
+  id-token: write # OIDC トークンの取得に必要
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false # 途中中断は S3 に中途半端な状態を残すのでしない
+
+env:
+  FRONTEND_BUCKET: odds-resolver-frontend-417441750247
+  DISTRIBUTION_ID: EFKLDN2JW3EUF
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::417441750247:role/odds-resolver-github-deploy
+          aws-region: ap-northeast-1
+
+      # --delete で前回の残骸を消す。frontend バケットは毎回まるごと置き換える。
+      # index.html は再検証必須（no-cache）、それ以外の静的アセットは長めに持たせる。
+      - name: Sync frontend to S3
+        run: |
+          aws s3 sync frontend/ "s3://${FRONTEND_BUCKET}/" \
+            --delete \
+            --exclude "index.html" \
+            --cache-control "public, max-age=3600"
+          aws s3 cp frontend/index.html "s3://${FRONTEND_BUCKET}/index.html" \
+            --cache-control "no-cache"
+
+      - name: Invalidate CloudFront cache
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "${DISTRIBUTION_ID}" \
+            --paths "/*"
