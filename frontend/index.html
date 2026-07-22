@@ -7,37 +7,237 @@
   <style>
     :root {
       color-scheme: light dark;
-      --fg: #1a1a2e;
-      --bg: #f5f5f7;
-      --accent: #3b6ea5;
+      /* テキスト・面はロールで持つ。ヒートマップの色は JS 側の ramp で塗る */
+      --surface-1: #fcfcfb;
+      --surface-2: #f0efec;
+      --text-primary: #0b0b0b;
+      --text-secondary: #52514e;
+      --border: #d8d7d2;
     }
     @media (prefers-color-scheme: dark) {
       :root {
-        --fg: #e8e8ef;
-        --bg: #14141f;
-        --accent: #7fb0e0;
+        --surface-1: #1a1a19;
+        --surface-2: #262625;
+        --text-primary: #ffffff;
+        --text-secondary: #c3c2b7;
+        --border: #3d3d3a;
       }
     }
     body {
       margin: 0;
-      min-height: 100dvh;
-      display: grid;
-      place-items: center;
-      background: var(--bg);
-      color: var(--fg);
+      background: var(--surface-1);
+      color: var(--text-primary);
       font-family: system-ui, sans-serif;
+      line-height: 1.5;
     }
-    main { text-align: center; padding: 2rem; }
-    h1 { font-size: 1.8rem; letter-spacing: 0.04em; }
-    h1 span { color: var(--accent); }
-    p { opacity: 0.7; }
+    main { max-width: 900px; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+    h1 { font-size: 1.4rem; letter-spacing: 0.04em; margin: 0; }
+    .race-meta { color: var(--text-secondary); font-size: 0.85rem; margin: 0.2rem 0 1.2rem; }
+    .chart-title { font-size: 1rem; font-weight: 600; margin: 0 0 0.2rem; }
+    .chart-sub { color: var(--text-secondary); font-size: 0.8rem; margin: 0 0 0.8rem; }
+    .chart-scroll { overflow-x: auto; }
+    svg { display: block; }
+    svg text { font-family: system-ui, sans-serif; }
+
+    /* ツールチップ。値が主、ラベルが従 */
+    #tooltip {
+      position: fixed;
+      pointer-events: none;
+      background: var(--surface-1);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.4rem 0.6rem;
+      font-size: 0.8rem;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+      opacity: 0;
+      transition: opacity 0.08s;
+      z-index: 10;
+    }
+    #tooltip .val { font-weight: 700; font-size: 0.95rem; }
+    #tooltip .lbl { color: var(--text-secondary); }
+
+    /* 凡例（連続スケールバー） */
+    .legend { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.6rem;
+              font-size: 0.75rem; color: var(--text-secondary); }
+    .legend-bar { width: 140px; height: 10px; border-radius: 5px; }
+
+    /* テーブルビュー: 色に読めない読者のための逃げ道 */
+    details { margin-top: 1.2rem; }
+    summary { cursor: pointer; color: var(--text-secondary); font-size: 0.85rem; }
+    table { border-collapse: collapse; font-size: 0.78rem; margin-top: 0.6rem; }
+    th, td { border: 1px solid var(--border); padding: 0.25rem 0.5rem; text-align: right; }
+    th:first-child, td:first-child { text-align: left; }
+    thead th { background: var(--surface-2); }
   </style>
 </head>
 <body>
   <main>
-    <h1>Odds<span>Resolver</span></h1>
-    <p>数字の羅列を、動きと歪みの地図へ。</p>
-    <p>準備中 — 配信基盤の疎通確認ページ</p>
+    <h1>Odds<span style="opacity:.55">Resolver</span></h1>
+    <p class="race-meta" id="race-meta">読み込み中…</p>
+
+    <p class="chart-title">支持率ヒートマップ</p>
+    <p class="chart-sub">縦=馬、横=時刻。色が濃いほど支持率（1/オッズの正規化）が高い。</p>
+    <div class="chart-scroll"><div id="chart"></div></div>
+    <div class="legend">
+      <span>低</span>
+      <div class="legend-bar" id="legend-bar"></div>
+      <span>高</span>
+      <span style="margin-left:0.8rem">支持率</span>
+    </div>
+
+    <details>
+      <summary>データ表で見る（最終スナップショットのオッズ）</summary>
+      <div class="chart-scroll"><table id="data-table"></table></div>
+    </details>
   </main>
+  <div id="tooltip" role="status"></div>
+
+  <script>
+    // 支持率 = (1/odds) をスナップショット内で正規化した値。
+    // オッズそのものを色にすると分布の裾（大穴）に引きずられて手前が全部同じ色になる。
+
+    // sequential blue ramp（skill の参照パレット 100→700）。連続量なので
+    // 最薄端が surface に溶けるのは仕様（「ほぼゼロ」を意味する）。
+    const RAMP = ["#cde2fb", "#b7d3f6", "#9ec5f4", "#86b6ef", "#6da7ec",
+                  "#5598e7", "#3987e5", "#2a78d6", "#256abf", "#1c5cab",
+                  "#184f95", "#104281", "#0d366b"];
+
+    const rampColor = t => RAMP[Math.min(RAMP.length - 1, Math.floor(t * RAMP.length))];
+
+    // 濃いセルの上の文字は白、薄いセルは黒。ツールチップがあるのでセル内
+    // 文字は使っていないが、hover リフト時の輪郭色判定にも使う。
+    const isDark = t => t > 0.55;
+
+    const CELL_W = 52, CELL_H = 30, GAP = 2;      // 2px surface gap（マーク仕様）
+    const LEFT = 150, TOP = 28;
+
+    async function main() {
+      const res = await fetch("data/races/202607220611.json");
+      const race = await res.json();
+
+      document.getElementById("race-meta").textContent =
+        `${race.venue} ${race.race_no}R ${race.name} / 発走 ${race.post_time}`;
+      document.title = `OddsResolver — ${race.name}`;
+
+      // 支持率行列: [snapshot][horse]
+      const support = race.snapshots.map(s => {
+        const inv = s.odds.map(o => 1 / o);
+        const sum = inv.reduce((a, b) => a + b, 0);
+        return inv.map(v => v / sum);
+      });
+      const maxS = Math.max(...support.flat());
+
+      const nH = race.horses.length, nT = race.snapshots.length;
+      const w = LEFT + nT * (CELL_W + GAP);
+      const h = TOP + nH * (CELL_H + GAP);
+
+      const svgNS = "http://www.w3.org/2000/svg";
+      const svg = document.createElementNS(svgNS, "svg");
+      svg.setAttribute("width", w);
+      svg.setAttribute("height", h);
+      svg.setAttribute("role", "img");
+      svg.setAttribute("aria-label", "馬ごとの支持率の時間推移ヒートマップ");
+
+      // 時刻ラベル（横軸）
+      race.snapshots.forEach((s, i) => {
+        const tx = document.createElementNS(svgNS, "text");
+        tx.setAttribute("x", LEFT + i * (CELL_W + GAP) + CELL_W / 2);
+        tx.setAttribute("y", TOP - 10);
+        tx.setAttribute("text-anchor", "middle");
+        tx.setAttribute("font-size", "11");
+        tx.setAttribute("fill", "var(--text-secondary)");
+        tx.textContent = s.time;
+        svg.appendChild(tx);
+      });
+
+      // 馬名ラベル（縦軸）+ セル
+      const tooltip = document.getElementById("tooltip");
+      race.horses.forEach((horse, j) => {
+        const ty = TOP + j * (CELL_H + GAP) + CELL_H / 2;
+        const tx = document.createElementNS(svgNS, "text");
+        tx.setAttribute("x", LEFT - 8);
+        tx.setAttribute("y", ty + 4);
+        tx.setAttribute("text-anchor", "end");
+        tx.setAttribute("font-size", "12");
+        tx.setAttribute("fill", "var(--text-primary)");
+        tx.textContent = `${horse.num} ${horse.name}`;
+        svg.appendChild(tx);
+
+        race.snapshots.forEach((s, i) => {
+          const t = support[i][j] / maxS;
+          const rect = document.createElementNS(svgNS, "rect");
+          rect.setAttribute("x", LEFT + i * (CELL_W + GAP));
+          rect.setAttribute("y", TOP + j * (CELL_H + GAP));
+          rect.setAttribute("width", CELL_W);
+          rect.setAttribute("height", CELL_H);
+          rect.setAttribute("rx", 3);
+          rect.setAttribute("fill", rampColor(t));
+          rect.setAttribute("tabindex", "0");
+
+          const show = ev => {
+            rect.setAttribute("stroke", isDark(t) ? "#ffffff" : "#0b0b0b");
+            rect.setAttribute("stroke-width", "1.5");
+            tooltip.replaceChildren();
+            const v = document.createElement("div");
+            v.className = "val";
+            v.textContent = `${s.odds[j].toFixed(1)} 倍`;
+            const l = document.createElement("div");
+            l.className = "lbl";
+            l.textContent = `${horse.num} ${horse.name} / ${s.time} / 支持率 ${(support[i][j] * 100).toFixed(1)}%`;
+            tooltip.append(v, l);
+            tooltip.style.opacity = "1";
+            const px = ev.clientX ?? rect.getBoundingClientRect().x;
+            const py = ev.clientY ?? rect.getBoundingClientRect().y;
+            tooltip.style.left = Math.min(px + 14, innerWidth - 240) + "px";
+            tooltip.style.top = (py + 14) + "px";
+          };
+          const hide = () => {
+            rect.removeAttribute("stroke");
+            tooltip.style.opacity = "0";
+          };
+          rect.addEventListener("pointermove", show);
+          rect.addEventListener("pointerleave", hide);
+          rect.addEventListener("focus", show);
+          rect.addEventListener("blur", hide);
+          svg.appendChild(rect);
+        });
+      });
+
+      document.getElementById("chart").appendChild(svg);
+
+      // 凡例バー（連続グラデーション）
+      document.getElementById("legend-bar").style.background =
+        `linear-gradient(to right, ${RAMP[0]}, ${RAMP[6]}, ${RAMP[12]})`;
+
+      // テーブルビュー（最終スナップショット）
+      const last = race.snapshots[nT - 1];
+      const lastSupport = support[nT - 1];
+      const table = document.getElementById("data-table");
+      const thead = document.createElement("thead");
+      const hr = document.createElement("tr");
+      ["馬", `オッズ (${last.time})`, "支持率"].forEach(x => {
+        const th = document.createElement("th");
+        th.textContent = x;
+        hr.appendChild(th);
+      });
+      thead.appendChild(hr);
+      const tbody = document.createElement("tbody");
+      race.horses.forEach((horse, j) => {
+        const tr = document.createElement("tr");
+        [`${horse.num} ${horse.name}`, `${last.odds[j].toFixed(1)}`,
+         `${(lastSupport[j] * 100).toFixed(1)}%`].forEach(x => {
+          const td = document.createElement("td");
+          td.textContent = x;
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+      table.append(thead, tbody);
+    }
+
+    main().catch(e => {
+      document.getElementById("race-meta").textContent = "データの読み込みに失敗: " + e.message;
+    });
+  </script>
 </body>
 </html>
