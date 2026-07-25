@@ -5,8 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>OddsResolver</title>
   <style>
-    /* テーマ「ナイター紺」: 瑠璃紺のアクセント + 寒色寄りの中立色。
-       accent/hot/cool の分離は dataviz の validate_palette で両モード検証済み */
+
     :root {
       color-scheme: light dark;
       --surface-1: #fbfcfd;
@@ -14,10 +13,10 @@
       --text-primary: #0b0c0f;
       --text-secondary: #4f5560;
       --border: #d6dae1;
-      --accent: #1e50a2;    /* 瑠璃紺 */
-      --on-accent: #ffffff; /* accent 面上の文字色 */
-      --hot: #b8432c;       /* 一強（過熱） */
-      --cool: #0e8f7e;      /* 混戦（拮抗） */
+      --accent: #1e50a2;
+      --on-accent: #ffffff;
+      --hot: #b8432c;
+      --cool: #0e8f7e;
     }
     @media (prefers-color-scheme: dark) {
       :root {
@@ -64,7 +63,6 @@
     }
     main { max-width: 760px; margin: 0 auto; padding: 1.25rem 1rem 3rem; }
 
-    /* ヘッダー: ブランドと日付ナビを 1 行に統合 */
     .masthead {
       display: flex;
       align-items: center;
@@ -82,7 +80,7 @@
     }
     .brand:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
     h1 { font-size: 1.25rem; letter-spacing: 0.04em; margin: 0; }
-    /* ロゴ: 馬×時間ヒートマップのミニ格子。1 マスだけ暖色 = 地図の中の歪み */
+
     .brand-mark {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
@@ -98,7 +96,6 @@
     .brand-mark span:nth-child(5) { opacity: 0.7; }
     .brand-mark span:nth-child(6) { opacity: 0.45; }
 
-    /* 日付切り替え */
     .datebar {
       display: flex;
       align-items: center;
@@ -139,7 +136,6 @@
     .dateselect:hover { border-color: var(--accent); }
     .dateselect:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-    /* 歪みハイライト（一強 / 混戦 の対比カード） */
     .hero {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -193,7 +189,6 @@
     .hot .hero-bar span { background: var(--hot); }
     .cool .hero-bar span { background: var(--cool); }
 
-    /* 一強 / 混戦 バッジ */
     .chip {
       flex: none;
       font-size: 0.68rem;
@@ -206,7 +201,6 @@
     .chip.hot { color: var(--hot); border-color: color-mix(in srgb, var(--hot) 55%, transparent); }
     .chip.cool { color: var(--cool); border-color: color-mix(in srgb, var(--cool) 55%, transparent); }
 
-    /* 会場タブ: 下線式。選択中は accent の太下線 + 濃い文字で示す */
     .tabs {
       display: flex;
       flex-wrap: wrap;
@@ -221,10 +215,10 @@
       color: var(--text-secondary);
       font: inherit;
       font-size: 0.95rem;
-      font-weight: 600; /* 選択で太さを変えると幅が揺れるため全タブ同じ太さ */
+      font-weight: 600;
       letter-spacing: 0.02em;
       padding: 0.25rem 0.1rem 0.5rem;
-      margin-bottom: -1px; /* 下線を罫線に重ねる */
+      margin-bottom: -1px;
       border-bottom: 2px solid transparent;
       cursor: pointer;
     }
@@ -241,11 +235,10 @@
     }
     .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-    /* レース行 */
     .races { display: flex; flex-direction: column; }
     .race-link {
       display: grid;
-      /* R番号 / レース名 / バッジ / 時刻 / 頭数。右側の各列は独立して縦に揃える */
+
       grid-template-columns: 2.6em minmax(0, 1fr) auto auto auto;
       align-items: center;
       gap: 0.7rem;
@@ -278,12 +271,11 @@
       font-variant-numeric: tabular-nums;
       text-align: right;
     }
-    /* 桁数（5頭/12頭・9:07/15:35）の違いで揺れないよう最小幅で固定する */
+
     .race-time { min-width: 2.9em; }
     .race-heads { min-width: 2.6em; }
     .empty { color: var(--text-secondary); padding: 1rem 0; }
 
-    /* フッター: 免責と表記。本文と同じ静かなトーンで */
     .site-foot {
       margin-top: 2.5rem;
       padding-top: 0.9rem;
@@ -319,21 +311,19 @@
   </main>
 
   <script>
-    // 生表記のレース名から、表示用に先頭の条件部分だけを取り出す。
-    // 例: "Ｃ３三　Ｃ３三　３歳以上" → "Ｃ３三"。データ側は生表記のまま保持する。
+
     function shortName(name) {
       if (!name) return "";
       const parts = name.split(/[　\s]+/).filter(Boolean);
       let label = parts[0] || name;
-      // 先頭語が短すぎる（記号1個など）ときは2語目まで拾って情報量を確保。
+
       if (label.length <= 2 && parts[1] && parts[1] !== parts[0]) {
         label = parts[0] + " " + parts[1];
       }
       return label;
     }
 
-    // 状態: いま選んでいる開催日と会場。URL ハッシュ #日付/会場 に写す。
-    let days = [];            // days.json の配列（新しい順）
+    let days = [];
     let currentDate = null;   // "2026-07-24"
     let byVenue = new Map();
     let venues = [];
@@ -378,10 +368,8 @@
         const name = document.createElement("span");
         name.className = "race-name";
         name.textContent = shortName(r.name);
-        name.title = r.name; // 生表記全文はツールチップで確認できる
+        name.title = r.name;
 
-        // バッジは独立した列に置き、行を跨いで右側で縦に揃える。
-        // バッジ無しの行にも空セルを置いて列ずれを防ぐ。
         const chipCell = document.createElement("span");
         const kind = raceKind(r);
         if (kind) {
@@ -402,18 +390,15 @@
       }
     }
 
-    // 指標のバッジ判定。index.json の top1（1番人気支持率）と ent（混戦度）に
-    // 閾値を当てる。閾値は表示の判断なのでフロント側に置く。
-    const TOP1_MIN = 0.60; // これ以上なら「一強」
-    const ENT_MIN = 0.84;  // これ以上なら「混戦」
+    const TOP1_MIN = 0.60;
+    const ENT_MIN = 0.84;
     function raceKind(r) {
-      if (r.top1 == null) return null; // 中止・欠測（指標なし）
+      if (r.top1 == null) return null;
       if (r.top1 >= TOP1_MIN) return "hot";
       if (r.ent >= ENT_MIN) return "cool";
       return null;
     }
 
-    // 上段: その日で最も「一強」なレースと最も「混戦」なレースを対比で見せる。
     async function renderHero(idx) {
       const hero = document.getElementById("hero");
       hero.innerHTML = "";
@@ -451,8 +436,6 @@
         a.append(lb, tt, st, bar);
         hero.appendChild(a);
 
-        // 支持率バー: 各馬の支持率を大きい順に並べた比例セグメント。
-        // レース詳細 JSON を読むのは上段の 2 レースだけ。
         fillHeroBar(bar, r.race_id);
       }
       hero.hidden = false;
@@ -474,10 +457,9 @@
           seg.style.opacity = String(0.35 + 0.65 * (p / sup[0]));
           bar.appendChild(seg);
         }
-      } catch { /* バーは装飾。失敗しても本文には影響させない */ }
+      } catch {  }
     }
 
-    // 開催日を切り替える。日別 index を読み、会場タブとレース一覧を作り直す。
     async function selectDate(date, wantVenue) {
       const dir = date.replaceAll("-", ""); // "2026-07-24" -> "20260724"
       const res = await fetch(`data/${dir}/index.json`);
@@ -485,15 +467,13 @@
       const idx = await res.json();
       currentDate = date;
 
-      // 日付セレクタ・前後ナビの状態を同期
       document.getElementById("dateselect").value = date;
       const i = days.findIndex(d => d.date === date);
-      document.getElementById("prevDay").disabled = i >= days.length - 1; // 過去方向
-      document.getElementById("nextDay").disabled = i <= 0;               // 未来方向
+      document.getElementById("prevDay").disabled = i >= days.length - 1;
+      document.getElementById("nextDay").disabled = i <= 0;
 
       renderHero(idx);
 
-      // フラットな races を会場でグループ化し、R 番号順に並べる。
       byVenue = new Map();
       for (const r of idx.races) {
         if (!byVenue.has(r.venue)) byVenue.set(r.venue, []);
@@ -502,7 +482,6 @@
       for (const races of byVenue.values()) races.sort((a, b) => a.race_no - b.race_no);
       venues = [...byVenue.keys()];
 
-      // 会場タブを作り直す
       const tabs = document.getElementById("tabs");
       tabs.innerHTML = "";
       for (const venue of venues) {
@@ -544,7 +523,6 @@
       days = (await res.json()).days || [];
       if (days.length === 0) throw new Error("開催日がありません");
 
-      // 日付セレクタを埋める（新しい順）
       const sel = document.getElementById("dateselect");
       for (const d of days) {
         const opt = document.createElement("option");
@@ -553,10 +531,9 @@
         sel.appendChild(opt);
       }
       sel.addEventListener("change", () => selectDate(sel.value, null).catch(showError));
-      document.getElementById("prevDay").addEventListener("click", () => stepDay(+1)); // 過去へ
-      document.getElementById("nextDay").addEventListener("click", () => stepDay(-1)); // 未来へ
+      document.getElementById("prevDay").addEventListener("click", () => stepDay(+1));
+      document.getElementById("nextDay").addEventListener("click", () => stepDay(-1));
 
-      // 初期状態: URL ハッシュ #日付/会場 があればそれ、無ければ最新日
       const { date, venue } = parseHash();
       const initialDate = days.some(d => d.date === date) ? date : days[0].date;
 
