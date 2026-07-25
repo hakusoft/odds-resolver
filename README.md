@@ -58,22 +58,17 @@
 
 ## アーキテクチャ（想定 / AWS 無料枠前提）
 
-```
-取得（1分毎）
-  EventBridge → Lambda（取得 + 指標計算）
-        │
-        ▼
-  DynamoDB（当日ホット / 最新スナップショット + 履歴）
-        │
-        │ 夜間バッチ（EventBridge 深夜起動 → Lambda）
-        │  確定した当日分を変換・静的化
-        ▼
-  S3
-   ├─ raw/   … Parquet。たまに Athena で探索的分析する用（機械向け）
-   └─ view/  … 指標つき整形 JSON。サイトが直読みする表示用（人間向け）
-        │
-        ▼
-  CloudFront（過去は無限キャッシュ / 当日は短TTL）→ ブラウザが描画
+```mermaid
+flowchart TB
+  EB["EventBridge（1分毎）"] --> FETCH["Lambda: fetch<br>取得 + 指標計算"]
+  FETCH --> DDB[("DynamoDB<br>当日ホット / スナップショット履歴")]
+  EBN["EventBridge（深夜）"] --> ARC["Lambda: archive<br>確定した当日分を変換・静的化"]
+  DDB --> ARC
+  ARC --> RAW[("S3 raw/<br>Parquet・探索用（機械向け）")]
+  ARC --> VIEW[("S3 view/<br>指標つき整形 JSON・表示用（人間向け）")]
+  VIEW --> CF["CloudFront<br>過去は無限キャッシュ / 当日は短TTL"]
+  CF --> BR["ブラウザ（SVG 描画）"]
+  ATH["Athena（たまの探索的分析）"] -.-> RAW
 ```
 
 - **当日（ホット）**：取得 Lambda が生オッズを取り、指標計算して DynamoDB へ。提示は 1 分キャッシュ。
@@ -154,6 +149,21 @@
 - **詳細ページ**: 支持率ヒートマップ（馬 × 時刻）。データ表ビューつき。
 - **デザイン**: テーマは「ナイター紺」（瑠璃紺 + 発散配色 hot/cool）。配色はライト/ダーク両モードで
   CVD 分離・コントラストを検証済み。免責つきフッター。
+
+### 現在の形（当日取り込み前の暫定運用）
+
+```mermaid
+flowchart LR
+  SCRAPE["ローカル取得<br>1日1回・確定オッズ"] --> GEN["JSON 生成<br>+ 指標の事前計算"]
+  GEN --> PUSH["git push（main）"]
+  PUSH --> GHA["GitHub Actions<br>OIDC"]
+  GHA --> S3[("S3<br>frontend + data")]
+  S3 --> CF["CloudFront<br>目次 60s / レース 3600s"]
+  CF --> BR["ブラウザ（SVG 描画）"]
+```
+
+上のアーキテクチャ図との差分がそのままロードマップ。取得のローカル実行を
+Lambda + EventBridge に、置き場を DynamoDB + 夜間バッチに置き換えていく。
 
 ### これから（優先順）
 
