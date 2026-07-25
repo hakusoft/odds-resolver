@@ -63,6 +63,21 @@
     }
     main { max-width: 760px; margin: 0 auto; padding: 1.25rem 1rem 3rem; }
 
+    .theme-btn {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: var(--surface-1);
+      color: var(--text-primary);
+      font: inherit;
+      font-size: 0.95rem;
+      width: 2rem;
+      height: 2rem;
+      border-radius: 4px;
+      cursor: pointer;
+      line-height: 1;
+    }
+    .theme-btn:hover { border-color: var(--accent); }
+    .theme-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     .masthead {
       display: flex;
       align-items: center;
@@ -282,24 +297,12 @@
     .chip.hot { color: var(--hot); border-color: color-mix(in srgb, var(--hot) 55%, transparent); }
     .chip.cool { color: var(--cool); border-color: color-mix(in srgb, var(--cool) 55%, transparent); }
 
-    .tabsrow {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-end;
-      gap: 0.8rem;
-      flex-wrap: wrap;
-      border-bottom: 1px solid var(--border);
-      margin: 0 0 1rem;
-    }
     .tabs {
       display: flex;
       flex-wrap: wrap;
       gap: 1.2rem;
-    }
-    .day-summary {
-      display: flex;
-      gap: 0.4rem;
-      margin: 0 0 0.5rem;
+      margin: 0 0 1rem;
+      border-bottom: 1px solid var(--border);
     }
     .tab {
       appearance: none;
@@ -385,6 +388,12 @@
     }
     .site-foot p { margin: 0; }
   </style>
+  <script>
+    (() => {
+      const t = localStorage.getItem("theme");
+      if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+    })();
+  </script>
 </head>
 <body>
   <main>
@@ -393,6 +402,7 @@
         <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span></span>
         <h1>Odds<span style="font-weight:300;opacity:.8">Resolver</span></h1>
       </a>
+      <button class="theme-btn" id="themetoggle" type="button"></button>
     </header>
     <p class="empty" id="status">読み込み中…</p>
     <section id="nextsec" hidden>
@@ -420,10 +430,7 @@
         <button class="datenav" id="nextDay" type="button" aria-label="次の開催日">›</button>
       </div>
     </div>
-    <div class="tabsrow">
-      <div class="tabs" id="tabs" role="tablist" aria-label="開催会場"></div>
-      <div class="day-summary" id="daysummary"></div>
-    </div>
+    <div class="tabs" id="tabs" role="tablist" aria-label="開催会場"></div>
     <div class="races" id="races" role="tabpanel"></div>
     <footer class="site-foot">
       <p>オッズは取得時点の参考値で、的中・正確性は保証しません。馬券の購入は20歳から。 © 2026 OddsResolver</p>
@@ -442,6 +449,25 @@
       }
       return label;
     }
+
+    const themeBtn = document.getElementById("themetoggle");
+    function currentTheme() {
+      const t = document.documentElement.dataset.theme;
+      if (t === "light" || t === "dark") return t;
+      return matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+    function syncThemeBtn() {
+      const dark = currentTheme() === "dark";
+      themeBtn.textContent = dark ? "\u2600\uFE0E" : "\u263E";
+      themeBtn.setAttribute("aria-label", dark ? "ライトモードに切り替え" : "ダークモードに切り替え");
+    }
+    themeBtn.addEventListener("click", () => {
+      const next = currentTheme() === "dark" ? "light" : "dark";
+      document.documentElement.dataset.theme = next;
+      localStorage.setItem("theme", next);
+      syncThemeBtn();
+    });
+    syncThemeBtn();
 
     let days = [];
     let currentDate = null;   // "2026-07-24"
@@ -681,18 +707,6 @@
       const i = days.findIndex(d => d.date === date);
       document.getElementById("prevDay").disabled = i >= days.length - 1;
       document.getElementById("nextDay").disabled = i <= 0;
-
-      const summary = document.getElementById("daysummary");
-      summary.innerHTML = "";
-      const nHot = idx.races.filter(r => raceKind(r) === "hot").length;
-      const nCool = idx.races.filter(r => raceKind(r) === "cool").length;
-      for (const [n, cls, label] of [[nHot, "hot", "一強"], [nCool, "cool", "混戦"]]) {
-        if (!n) continue;
-        const c = document.createElement("span");
-        c.className = `chip ${cls}`;
-        c.textContent = `${label} ${n}`;
-        summary.appendChild(c);
-      }
 
       byVenue = new Map();
       for (const r of idx.races) {
