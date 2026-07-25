@@ -13,20 +13,39 @@
       --text-primary: #0b0c0f;
       --text-secondary: #4f5560;
       --border: #d6dae1;
-      --accent: #1e50a2;
-      --hot: #b8432c;
+      --accent: #2d539e;
+      --hot: #a02c2c;
     }
     @media (prefers-color-scheme: dark) {
       :root {
-        --surface-1: #17181b;
-        --surface-2: #222429;
+        --surface-1: #151823;
+        --surface-2: #1e2230;
         --text-primary: #ffffff;
-        --text-secondary: #bac0cc;
-        --border: #383c44;
-        --accent: #6487e6;
-        --hot: #e0674c;
+        --text-secondary: #b7bfd3;
+        --border: #343a4c;
+        --accent: #84a0c6;
+        --hot: #e27878;
       }
     }
+    :root[data-theme="light"] {
+      --surface-1: #fbfcfd;
+      --surface-2: #eff1f5;
+      --text-primary: #0b0c0f;
+      --text-secondary: #4f5560;
+      --border: #d6dae1;
+      --accent: #2d539e;
+      --hot: #a02c2c;
+    }
+    :root[data-theme="dark"] {
+      --surface-1: #151823;
+      --surface-2: #1e2230;
+      --text-primary: #ffffff;
+      --text-secondary: #b7bfd3;
+      --border: #343a4c;
+      --accent: #84a0c6;
+      --hot: #e27878;
+    }
+    :root { --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
     body {
       margin: 0;
       background: var(--surface-1);
@@ -36,23 +55,47 @@
     }
     main { max-width: 900px; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
 
-    .masthead { margin: 0 0 1.2rem; }
+    .masthead {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.8rem;
+      margin: 0.4rem 0 1.4rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .theme-btn {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: var(--surface-1);
+      color: var(--text-primary);
+      font: inherit;
+      font-size: 0.95rem;
+      width: 2rem;
+      height: 2rem;
+      border-radius: 4px;
+      cursor: pointer;
+      line-height: 1;
+    }
+    .theme-btn:hover { border-color: var(--accent); }
+    .theme-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
     .brand {
       display: flex;
       align-items: center;
-      gap: 0.6rem;
+      gap: 0.8rem;
       text-decoration: none;
       color: inherit;
     }
     .brand:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
-    h1 { font-size: 1.25rem; letter-spacing: 0.04em; margin: 0; }
+    h1 { font-family: var(--font-mono); font-size: 1.55rem; font-weight: 700; letter-spacing: 0.06em; margin: 0; }
 
     .brand-mark {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
       gap: 2px;
-      width: 1.65rem;
-      height: 1.05rem;
+      width: 2rem;
+      height: 1.25rem;
       flex: none;
     }
     .brand-mark span { background: var(--accent); border-radius: 2px; }
@@ -105,14 +148,21 @@
     }
     .site-foot p { margin: 0; }
   </style>
+  <script>
+    (() => {
+      const t = localStorage.getItem("theme");
+      if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+    })();
+  </script>
 </head>
 <body>
   <main>
     <header class="masthead">
       <a class="brand" href="./">
         <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span></span>
-        <h1>Odds<span style="opacity:.55">Resolver</span></h1>
+        <h1>Odds<span style="font-weight:300;opacity:.8">Resolver</span></h1>
       </a>
+      <button class="theme-btn" id="themetoggle" type="button"></button>
     </header>
     <p class="race-meta" id="race-meta">読み込み中…</p>
 
@@ -131,13 +181,31 @@
       <div class="chart-scroll"><table id="data-table"></table></div>
     </details>
     <footer class="site-foot">
-      <p>オッズは取得時点の参考値です。的中・正確性を保証するものではありません。</p>
-      <p>馬券の購入は20歳になってから。 © 2026 OddsResolver</p>
+      <p>オッズは取得時点の参考値で、的中・正確性は保証しません。馬券の購入は20歳から。 © 2026 OddsResolver</p>
     </footer>
   </main>
   <div id="tooltip" role="status"></div>
 
   <script>
+
+    const themeBtn = document.getElementById("themetoggle");
+    function currentTheme() {
+      const t = document.documentElement.dataset.theme;
+      if (t === "light" || t === "dark") return t;
+      return matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+    function syncThemeBtn() {
+      const dark = currentTheme() === "dark";
+      themeBtn.textContent = dark ? "\u2600\uFE0E" : "\u263E";
+      themeBtn.setAttribute("aria-label", dark ? "ライトモードに切り替え" : "ダークモードに切り替え");
+    }
+    themeBtn.addEventListener("click", () => {
+      const next = currentTheme() === "dark" ? "light" : "dark";
+      document.documentElement.dataset.theme = next;
+      localStorage.setItem("theme", next);
+      syncThemeBtn();
+    });
+    syncThemeBtn();
 
     const RAMP = ["#cde2fb", "#b7d3f6", "#9ec5f4", "#86b6ef", "#6da7ec",
                   "#5598e7", "#3987e5", "#2a78d6", "#256abf", "#1c5cab",
@@ -161,7 +229,9 @@
       const race = await res.json();
 
       document.getElementById("race-meta").textContent =
-        `${race.venue} ${race.race_no}R ${race.name} / 発走 ${race.post_time}`;
+        `${race.venue} ${race.race_no}R ${race.name}` +
+        (race.surface ? ` ${race.surface}${race.distance}m` : "") +
+        ` / 発走 ${race.post_time}`;
       document.title = `OddsResolver — ${race.name}`;
 
       const support = race.snapshots.map(s => {

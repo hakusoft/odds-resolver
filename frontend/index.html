@@ -13,22 +13,22 @@
       --text-primary: #0b0c0f;
       --text-secondary: #4f5560;
       --border: #d6dae1;
-      --accent: #1e50a2;
+      --accent: #2d539e;
       --on-accent: #ffffff;
-      --hot: #b8432c;
-      --cool: #0e8f7e;
+      --hot: #a02c2c;
+      --cool: #ab8712;
     }
     @media (prefers-color-scheme: dark) {
       :root {
-        --surface-1: #17181b;
-        --surface-2: #222429;
+        --surface-1: #151823;
+        --surface-2: #1e2230;
         --text-primary: #ffffff;
-        --text-secondary: #bac0cc;
-        --border: #383c44;
-        --accent: #6487e6;
+        --text-secondary: #b7bfd3;
+        --border: #343a4c;
+        --accent: #84a0c6;
         --on-accent: #10131a;
-        --hot: #e0674c;
-        --cool: #1e9d89;
+        --hot: #e27878;
+        --cool: #e0c88a;
       }
     }
     :root[data-theme="light"] {
@@ -37,23 +37,24 @@
       --text-primary: #0b0c0f;
       --text-secondary: #4f5560;
       --border: #d6dae1;
-      --accent: #1e50a2;
+      --accent: #2d539e;
       --on-accent: #ffffff;
-      --hot: #b8432c;
-      --cool: #0e8f7e;
+      --hot: #a02c2c;
+      --cool: #ab8712;
     }
     :root[data-theme="dark"] {
-      --surface-1: #17181b;
-      --surface-2: #222429;
+      --surface-1: #151823;
+      --surface-2: #1e2230;
       --text-primary: #ffffff;
-      --text-secondary: #bac0cc;
-      --border: #383c44;
-      --accent: #6487e6;
+      --text-secondary: #b7bfd3;
+      --border: #343a4c;
+      --accent: #84a0c6;
       --on-accent: #10131a;
-      --hot: #e0674c;
-      --cool: #1e9d89;
+      --hot: #e27878;
+      --cool: #e0c88a;
     }
     * { box-sizing: border-box; }
+    :root { --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
     body {
       margin: 0;
       background: var(--surface-1);
@@ -63,30 +64,47 @@
     }
     main { max-width: 760px; margin: 0 auto; padding: 1.25rem 1rem 3rem; }
 
+    .theme-btn {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: var(--surface-1);
+      color: var(--text-primary);
+      font: inherit;
+      font-size: 0.95rem;
+      width: 2rem;
+      height: 2rem;
+      border-radius: 4px;
+      cursor: pointer;
+      line-height: 1;
+    }
+    .theme-btn:hover { border-color: var(--accent); }
+    .theme-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     .masthead {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 0.8rem 1.2rem;
       flex-wrap: wrap;
-      margin: 0 0 1.2rem;
+      margin: 0.4rem 0 1.4rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--border);
     }
     .brand {
       display: flex;
       align-items: center;
-      gap: 0.6rem;
+      gap: 0.8rem;
       text-decoration: none;
       color: inherit;
     }
     .brand:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
-    h1 { font-size: 1.25rem; letter-spacing: 0.04em; margin: 0; }
+    h1 { font-family: var(--font-mono); font-size: 1.55rem; font-weight: 700; letter-spacing: 0.06em; margin: 0; }
 
     .brand-mark {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
       gap: 2px;
-      width: 1.65rem;
-      height: 1.05rem;
+      width: 2rem;
+      height: 1.25rem;
       flex: none;
     }
     .brand-mark span { background: var(--accent); border-radius: 2px; }
@@ -96,10 +114,91 @@
     .brand-mark span:nth-child(5) { opacity: 0.7; }
     .brand-mark span:nth-child(6) { opacity: 0.45; }
 
+    .sec-label {
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      color: var(--text-secondary);
+      margin: 0 0 0.35rem;
+    }
+    .next-card {
+      display: block;
+      border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+      border-radius: 4px;
+      padding: 0.7rem 0.9rem 0.8rem;
+      text-decoration: none;
+      color: var(--text-primary);
+      background: var(--surface-1);
+      margin: 0 0 0.6rem;
+    }
+    .next-card:hover, .next-card:focus-visible {
+      background: var(--surface-2);
+      outline: none;
+    }
+    .next-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 0.8rem;
+    }
+    .next-head .hero-title { min-width: 0; margin: 0; }
+    .next-body {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 1.2rem;
+      flex-wrap: wrap;
+    }
+    .next-viz {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      min-width: 180px;
+    }
+    .next-viz-row {
+      display: grid;
+      grid-template-columns: 1.4em minmax(0, 1fr) 2.8em;
+      align-items: center;
+      gap: 0.45em;
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      color: var(--text-secondary);
+    }
+    .next-viz-row > span:first-child { text-align: right; }
+    .next-viz-row > span:last-child { text-align: right; }
+    .next-viz-track {
+      display: block;
+      height: 6px;
+      border-radius: 3px;
+      background: var(--surface-2);
+      overflow: hidden;
+    }
+    .next-viz-fill {
+      display: block;
+      height: 100%;
+      background: var(--accent);
+      border-radius: 3px;
+    }
+    .next-count {
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: var(--accent);
+      white-space: nowrap;
+    }
+    .list-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.8rem;
+      flex-wrap: wrap;
+      margin: 0 0 0.7rem;
+    }
+    .list-head .sec-label { margin: 0; }
     .datebar {
       display: flex;
       align-items: center;
-      gap: 0.5rem;
+      gap: 0.4rem;
     }
     .datenav {
       appearance: none;
@@ -205,7 +304,6 @@
       display: flex;
       flex-wrap: wrap;
       gap: 1.2rem;
-      margin: 0 0 1rem;
       border-bottom: 1px solid var(--border);
     }
     .tab {
@@ -239,7 +337,7 @@
     .race-link {
       display: grid;
 
-      grid-template-columns: 2.6em minmax(0, 1fr) auto auto auto;
+      grid-template-columns: 2.6em minmax(0, 1fr) auto auto auto auto;
       align-items: center;
       gap: 0.7rem;
       padding: 0.6rem 0.6rem;
@@ -247,14 +345,13 @@
       text-decoration: none;
       color: var(--text-primary);
     }
-    .race-link:first-child { border-top: 1px solid var(--border); }
     .race-link:hover, .race-link:focus-visible {
       background: var(--surface-2);
       outline: none;
     }
     .race-no {
+      font-family: var(--font-mono);
       font-weight: 700;
-      font-variant-numeric: tabular-nums;
       color: var(--accent);
       text-align: right;
     }
@@ -264,49 +361,78 @@
       white-space: nowrap;
       min-width: 0;
     }
-    .race-time, .race-heads {
+    .race-time, .race-dist, .race-heads {
+      font-family: var(--font-mono);
       color: var(--text-secondary);
-      font-size: 0.8rem;
+      font-size: 0.78rem;
       white-space: nowrap;
-      font-variant-numeric: tabular-nums;
       text-align: right;
     }
 
     .race-time { min-width: 2.9em; }
+    .race-dist {
+      display: flex;
+      justify-content: space-between;
+      gap: 0.35em;
+      min-width: 4.2em;
+    }
     .race-heads { min-width: 2.6em; }
     .empty { color: var(--text-secondary); padding: 1rem 0; }
 
     .site-foot {
-      margin-top: 2.5rem;
-      padding-top: 0.9rem;
-      border-top: 1px solid var(--border);
+      margin-top: 2.2rem;
       color: var(--text-secondary);
       font-size: 0.75rem;
       line-height: 1.7;
     }
     .site-foot p { margin: 0; }
   </style>
+  <script>
+    (() => {
+      const t = localStorage.getItem("theme");
+      if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+    })();
+  </script>
 </head>
 <body>
   <main>
     <header class="masthead">
       <a class="brand" href="./">
         <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span></span>
-        <h1>Odds<span style="opacity:.55">Resolver</span></h1>
+        <h1>Odds<span style="font-weight:300;opacity:.8">Resolver</span></h1>
       </a>
+      <button class="theme-btn" id="themetoggle" type="button"></button>
+    </header>
+    <p class="empty" id="status">読み込み中…</p>
+    <section id="nextsec" hidden>
+      <p class="sec-label">次のレース</p>
+      <a class="next-card" id="nextcard">
+        <div class="next-head">
+          <div class="hero-title" id="nexttitle"></div>
+          <span class="next-count" id="nextcount"></span>
+        </div>
+        <div class="next-body">
+          <div class="hero-stat" id="nextstat"></div>
+          <div class="next-viz" id="nextviz"></div>
+        </div>
+      </a>
+    </section>
+    <section id="herosec" hidden>
+      <p class="sec-label" id="herolabel">ピックアップ</p>
+      <div class="hero" id="hero"></div>
+    </section>
+    <div class="list-head">
+      <p class="sec-label">開催</p>
       <div class="datebar" id="datebar" hidden>
         <button class="datenav" id="prevDay" type="button" aria-label="前の開催日">‹</button>
         <select class="dateselect" id="dateselect" aria-label="開催日"></select>
         <button class="datenav" id="nextDay" type="button" aria-label="次の開催日">›</button>
       </div>
-    </header>
-    <p class="empty" id="status">読み込み中…</p>
-    <div class="hero" id="hero" hidden></div>
+    </div>
     <div class="tabs" id="tabs" role="tablist" aria-label="開催会場"></div>
     <div class="races" id="races" role="tabpanel"></div>
     <footer class="site-foot">
-      <p>オッズは取得時点の参考値です。的中・正確性を保証するものではありません。</p>
-      <p>馬券の購入は20歳になってから。 © 2026 OddsResolver</p>
+      <p>オッズは取得時点の参考値で、的中・正確性は保証しません。馬券の購入は20歳から。 © 2026 OddsResolver</p>
     </footer>
   </main>
 
@@ -322,6 +448,25 @@
       }
       return label;
     }
+
+    const themeBtn = document.getElementById("themetoggle");
+    function currentTheme() {
+      const t = document.documentElement.dataset.theme;
+      if (t === "light" || t === "dark") return t;
+      return matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+    function syncThemeBtn() {
+      const dark = currentTheme() === "dark";
+      themeBtn.textContent = dark ? "\u2600\uFE0E" : "\u263E";
+      themeBtn.setAttribute("aria-label", dark ? "ライトモードに切り替え" : "ダークモードに切り替え");
+    }
+    themeBtn.addEventListener("click", () => {
+      const next = currentTheme() === "dark" ? "light" : "dark";
+      document.documentElement.dataset.theme = next;
+      localStorage.setItem("theme", next);
+      syncThemeBtn();
+    });
+    syncThemeBtn();
 
     let days = [];
     let currentDate = null;   // "2026-07-24"
@@ -381,11 +526,21 @@
         time.className = "race-time";
         time.textContent = r.post_time;
 
+        const dist = document.createElement("span");
+        dist.className = "race-dist";
+        if (r.surface) {
+          const sf = document.createElement("span");
+          sf.textContent = r.surface;
+          const dn = document.createElement("span");
+          dn.textContent = r.distance;
+          dist.append(sf, dn);
+        }
+
         const heads = document.createElement("span");
         heads.className = "race-heads";
         heads.textContent = `${r.n_horses}頭`;
 
-        a.append(no, name, chipCell, time, heads);
+        a.append(no, name, chipCell, time, dist, heads);
         panel.appendChild(a);
       }
     }
@@ -399,13 +554,103 @@
       return null;
     }
 
+    function nowTime() {
+      const q = new URLSearchParams(location.search).get("now");
+      return q ? new Date(q) : new Date();
+    }
+
+    let nextTimer = null;
+    function renderNext(idx) {
+      const sec = document.getElementById("nextsec");
+      const card = document.getElementById("nextcard");
+      const upcoming = idx.races
+        .map(r => ({ r, at: new Date(`${idx.date}T${r.post_time.padStart(5, "0")}:00`) }))
+        .filter(x => !isNaN(x.at) && x.at > nowTime())
+        .sort((a, b) => a.at - b.at)[0];
+      if (!upcoming) {
+        sec.hidden = true;
+        if (nextTimer) clearInterval(nextTimer);
+        return;
+      }
+      const { r, at } = upcoming;
+      card.href = `race.html?id=${encodeURIComponent(r.race_id)}`;
+      document.getElementById("nexttitle").textContent =
+        `${r.venue} ${r.race_no}R ・ ${shortName(r.name)}`;
+      document.getElementById("nextstat").textContent =
+        `発走 ${r.post_time}` +
+        (r.surface ? ` ・ ${r.surface}${r.distance}` : "") +
+        ` ・ ${r.n_horses}頭`;
+      fillNextViz(r.race_id);
+      const update = () => {
+        const ms = at - nowTime();
+        if (ms <= 0) { renderNext(idx); return; }
+        const m = Math.floor(ms / 60000);
+        document.getElementById("nextcount").textContent =
+          m >= 60 ? `あと${Math.floor(m / 60)}時間${m % 60}分`
+          : m >= 1 ? `あと${m}分` : "まもなく発走";
+      };
+      update();
+      if (nextTimer) clearInterval(nextTimer);
+      nextTimer = setInterval(update, 30000);
+      sec.hidden = false;
+    }
+
+    async function fillNextViz(raceId) {
+      const el = document.getElementById("nextviz");
+      el.innerHTML = "";
+      try {
+        const res = await fetch(`data/races/${encodeURIComponent(raceId)}.json`);
+        if (!res.ok) return;
+        const race = await res.json();
+        const odds = race.snapshots[race.snapshots.length - 1].odds;
+        const inv = odds.map(o => (o ? 1 / o : 0));
+        const sum = inv.reduce((a, b) => a + b, 0);
+        if (sum <= 0) return;
+        const rows = race.horses
+          .map((h, i) => ({ num: h.num, p: inv[i] / sum }))
+          .sort((a, b) => b.p - a.p)
+          .slice(0, 3);
+        const max = rows[0].p;
+        for (const { num, p } of rows) {
+          const row = document.createElement("div");
+          row.className = "next-viz-row";
+          const n = document.createElement("span");
+          n.textContent = num;
+          const track = document.createElement("span");
+          track.className = "next-viz-track";
+          const fill = document.createElement("span");
+          fill.className = "next-viz-fill";
+          fill.style.width = `${Math.round((p / max) * 100)}%`;
+          track.appendChild(fill);
+          const v = document.createElement("span");
+          v.textContent = `${Math.round(p * 100)}%`;
+          row.append(n, track, v);
+          el.appendChild(row);
+        }
+      } catch {}
+    }
+
     async function renderHero(idx) {
+      const sec = document.getElementById("herosec");
       const hero = document.getElementById("hero");
       hero.innerHTML = "";
       const scored = idx.races.filter(r => r.top1 != null);
-      if (scored.length === 0) { hero.hidden = true; return; }
-      const hot = scored.reduce((a, b) => (b.top1 > a.top1 ? b : a));
-      const cool = scored.reduce((a, b) => (b.ent > a.ent ? b : a));
+      if (scored.length === 0) { sec.hidden = true; return; }
+
+      const now = nowTime();
+      const pad = n => String(n).padStart(2, "0");
+      const todayStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+      const [, mm, dd] = idx.date.split("-");
+      document.getElementById("herolabel").textContent =
+        idx.date === todayStr ? "当日のピックアップ" : `${Number(mm)}月${Number(dd)}日のピックアップ`;
+
+      const nearestKind = kind => idx.races
+        .filter(r => raceKind(r) === kind)
+        .map(r => ({ r, at: new Date(`${idx.date}T${r.post_time.padStart(5, "0")}:00`) }))
+        .filter(x => !isNaN(x.at) && x.at > now)
+        .sort((a, b) => a.at - b.at)[0]?.r || null;
+      const hot = nearestKind("hot") || scored.reduce((a, b) => (b.top1 > a.top1 ? b : a));
+      const cool = nearestKind("cool") || scored.reduce((a, b) => (b.ent > a.ent ? b : a));
 
       const defs = [
         { r: hot, cls: "hot", label: "本命一強" },
@@ -438,7 +683,7 @@
 
         fillHeroBar(bar, r.race_id);
       }
-      hero.hidden = false;
+      sec.hidden = false;
     }
 
     async function fillHeroBar(bar, raceId) {
@@ -471,8 +716,6 @@
       const i = days.findIndex(d => d.date === date);
       document.getElementById("prevDay").disabled = i >= days.length - 1;
       document.getElementById("nextDay").disabled = i <= 0;
-
-      renderHero(idx);
 
       byVenue = new Map();
       for (const r of idx.races) {
@@ -536,6 +779,12 @@
 
       const { date, venue } = parseHash();
       const initialDate = days.some(d => d.date === date) ? date : days[0].date;
+
+      const latestDir = days[0].date.replaceAll("-", "");
+      fetch(`data/${latestDir}/index.json`)
+        .then(r => (r.ok ? r.json() : null))
+        .then(idx => { if (idx) { renderNext(idx); renderHero(idx); } })
+        .catch(() => {});
 
       document.getElementById("status").hidden = true;
       document.getElementById("datebar").hidden = false;
