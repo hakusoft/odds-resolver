@@ -14,7 +14,7 @@
       --text-secondary: #4f5560;
       --border: #d6dae1;
       --accent: #2d539e;
-      --hot: #c57339;
+      --hot: #8f6e1c;
     }
     @media (prefers-color-scheme: dark) {
       :root {
@@ -24,7 +24,7 @@
         --text-secondary: #b7bfd3;
         --border: #343a4c;
         --accent: #4f7cc2;
-        --hot: #bd8038;
+        --hot: #ddc07e;
       }
     }
     :root[data-theme="light"] {
@@ -34,7 +34,7 @@
       --text-secondary: #4f5560;
       --border: #d6dae1;
       --accent: #2d539e;
-      --hot: #c57339;
+      --hot: #8f6e1c;
     }
     :root[data-theme="dark"] {
       --surface-1: #151823;
@@ -43,7 +43,7 @@
       --text-secondary: #b7bfd3;
       --border: #343a4c;
       --accent: #4f7cc2;
-      --hot: #bd8038;
+      --hot: #ddc07e;
     }
     body {
       margin: 0;
@@ -59,7 +59,9 @@
       align-items: center;
       justify-content: space-between;
       gap: 0.8rem;
-      margin: 0.4rem 0 1.6rem;
+      margin: 0.4rem 0 1.4rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--border);
     }
     .theme-btn {
       appearance: none;
@@ -184,6 +186,25 @@
   <div id="tooltip" role="status"></div>
 
   <script>
+
+    const themeBtn = document.getElementById("themetoggle");
+    function currentTheme() {
+      const t = document.documentElement.dataset.theme;
+      if (t === "light" || t === "dark") return t;
+      return matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+    function syncThemeBtn() {
+      const dark = currentTheme() === "dark";
+      themeBtn.textContent = dark ? "\u2600\uFE0E" : "\u263E";
+      themeBtn.setAttribute("aria-label", dark ? "ライトモードに切り替え" : "ダークモードに切り替え");
+    }
+    themeBtn.addEventListener("click", () => {
+      const next = currentTheme() === "dark" ? "light" : "dark";
+      document.documentElement.dataset.theme = next;
+      localStorage.setItem("theme", next);
+      syncThemeBtn();
+    });
+    syncThemeBtn();
 
     const RAMP = ["#cde2fb", "#b7d3f6", "#9ec5f4", "#86b6ef", "#6da7ec",
                   "#5598e7", "#3987e5", "#2a78d6", "#256abf", "#1c5cab",

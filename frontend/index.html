@@ -15,8 +15,8 @@
       --border: #d6dae1;
       --accent: #2d539e;
       --on-accent: #ffffff;
-      --hot: #c57339;
-      --cool: #1f86ad;
+      --hot: #8f6e1c;
+      --cool: #567fae;
     }
     @media (prefers-color-scheme: dark) {
       :root {
@@ -27,8 +27,8 @@
         --border: #343a4c;
         --accent: #4f7cc2;
         --on-accent: #10131a;
-        --hot: #bd8038;
-        --cool: #0f9ab5;
+        --hot: #ddc07e;
+        --cool: #84a0c6;
       }
     }
     :root[data-theme="light"] {
@@ -39,8 +39,8 @@
       --border: #d6dae1;
       --accent: #2d539e;
       --on-accent: #ffffff;
-      --hot: #c57339;
-      --cool: #1f86ad;
+      --hot: #8f6e1c;
+      --cool: #567fae;
     }
     :root[data-theme="dark"] {
       --surface-1: #151823;
@@ -50,8 +50,8 @@
       --border: #343a4c;
       --accent: #4f7cc2;
       --on-accent: #10131a;
-      --hot: #bd8038;
-      --cool: #0f9ab5;
+      --hot: #ddc07e;
+      --cool: #84a0c6;
     }
     * { box-sizing: border-box; }
     body {
@@ -84,7 +84,9 @@
       justify-content: space-between;
       gap: 0.8rem 1.2rem;
       flex-wrap: wrap;
-      margin: 0.4rem 0 1.6rem;
+      margin: 0.4rem 0 1.4rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--border);
     }
     .brand {
       display: flex;
@@ -637,11 +639,21 @@
       hero.innerHTML = "";
       const scored = idx.races.filter(r => r.top1 != null);
       if (scored.length === 0) { sec.hidden = true; return; }
+
+      const now = nowTime();
+      const pad = n => String(n).padStart(2, "0");
+      const todayStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
       const [, mm, dd] = idx.date.split("-");
       document.getElementById("herolabel").textContent =
-        `${Number(mm)}月${Number(dd)}日のピックアップ`;
-      const hot = scored.reduce((a, b) => (b.top1 > a.top1 ? b : a));
-      const cool = scored.reduce((a, b) => (b.ent > a.ent ? b : a));
+        idx.date === todayStr ? "当日のピックアップ" : `${Number(mm)}月${Number(dd)}日のピックアップ`;
+
+      const nearestKind = kind => idx.races
+        .filter(r => raceKind(r) === kind)
+        .map(r => ({ r, at: new Date(`${idx.date}T${r.post_time.padStart(5, "0")}:00`) }))
+        .filter(x => !isNaN(x.at) && x.at > now)
+        .sort((a, b) => a.at - b.at)[0]?.r || null;
+      const hot = nearestKind("hot") || scored.reduce((a, b) => (b.top1 > a.top1 ? b : a));
+      const cool = nearestKind("cool") || scored.reduce((a, b) => (b.ent > a.ent ? b : a));
 
       const defs = [
         { r: hot, cls: "hot", label: "本命一強" },
