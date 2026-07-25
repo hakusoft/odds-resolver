@@ -96,6 +96,13 @@
     .brand-mark span:nth-child(5) { opacity: 0.7; }
     .brand-mark span:nth-child(6) { opacity: 0.45; }
 
+    .sec-label {
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      color: var(--text-secondary);
+      margin: 0 0 0.35rem;
+    }
     .next-card {
       display: block;
       border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
@@ -116,11 +123,43 @@
       align-items: baseline;
       gap: 0.8rem;
     }
-    .next-label {
-      font-size: 0.72rem;
-      font-weight: 700;
-      letter-spacing: 0.08em;
-      color: var(--accent);
+    .next-head .hero-title { min-width: 0; margin: 0; }
+    .next-body {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 1.2rem;
+      flex-wrap: wrap;
+    }
+    .next-viz {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      min-width: 180px;
+    }
+    .next-viz-row {
+      display: grid;
+      grid-template-columns: 1.4em minmax(0, 1fr) 2.8em;
+      align-items: center;
+      gap: 0.45em;
+      font-size: 0.7rem;
+      color: var(--text-secondary);
+      font-variant-numeric: tabular-nums;
+    }
+    .next-viz-row > span:first-child { text-align: right; }
+    .next-viz-row > span:last-child { text-align: right; }
+    .next-viz-track {
+      display: block;
+      height: 6px;
+      border-radius: 3px;
+      background: var(--surface-2);
+      overflow: hidden;
+    }
+    .next-viz-fill {
+      display: block;
+      height: 100%;
+      background: var(--accent);
+      border-radius: 3px;
     }
     .next-count {
       font-size: 0.85rem;
@@ -129,11 +168,19 @@
       font-variant-numeric: tabular-nums;
       white-space: nowrap;
     }
+    .list-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.8rem;
+      flex-wrap: wrap;
+      margin: 0 0 0.7rem;
+    }
+    .list-head .sec-label { margin: 0; }
     .datebar {
       display: flex;
       align-items: center;
       gap: 0.4rem;
-      margin: 0 0 0.9rem;
     }
     .datenav {
       appearance: none;
@@ -235,12 +282,24 @@
     .chip.hot { color: var(--hot); border-color: color-mix(in srgb, var(--hot) 55%, transparent); }
     .chip.cool { color: var(--cool); border-color: color-mix(in srgb, var(--cool) 55%, transparent); }
 
+    .tabsrow {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 0.8rem;
+      flex-wrap: wrap;
+      border-bottom: 1px solid var(--border);
+      margin: 0 0 1rem;
+    }
     .tabs {
       display: flex;
       flex-wrap: wrap;
       gap: 1.2rem;
-      margin: 0 0 1rem;
-      border-bottom: 1px solid var(--border);
+    }
+    .day-summary {
+      display: flex;
+      gap: 0.4rem;
+      margin: 0 0 0.5rem;
     }
     .tab {
       appearance: none;
@@ -336,21 +395,35 @@
       </a>
     </header>
     <p class="empty" id="status">読み込み中…</p>
-    <a class="next-card" id="nextcard" hidden>
-      <div class="next-head">
-        <span class="next-label">次のレース</span>
-        <span class="next-count" id="nextcount"></span>
+    <section id="nextsec" hidden>
+      <p class="sec-label">次のレース</p>
+      <a class="next-card" id="nextcard">
+        <div class="next-head">
+          <div class="hero-title" id="nexttitle"></div>
+          <span class="next-count" id="nextcount"></span>
+        </div>
+        <div class="next-body">
+          <div class="hero-stat" id="nextstat"></div>
+          <div class="next-viz" id="nextviz"></div>
+        </div>
+      </a>
+    </section>
+    <section id="herosec" hidden>
+      <p class="sec-label" id="herolabel">ピックアップ</p>
+      <div class="hero" id="hero"></div>
+    </section>
+    <div class="list-head">
+      <p class="sec-label">開催</p>
+      <div class="datebar" id="datebar" hidden>
+        <button class="datenav" id="prevDay" type="button" aria-label="前の開催日">‹</button>
+        <select class="dateselect" id="dateselect" aria-label="開催日"></select>
+        <button class="datenav" id="nextDay" type="button" aria-label="次の開催日">›</button>
       </div>
-      <div class="hero-title" id="nexttitle"></div>
-      <div class="hero-stat" id="nextstat"></div>
-    </a>
-    <div class="hero" id="hero" hidden></div>
-    <div class="datebar" id="datebar" hidden>
-      <button class="datenav" id="prevDay" type="button" aria-label="前の開催日">‹</button>
-      <select class="dateselect" id="dateselect" aria-label="開催日"></select>
-      <button class="datenav" id="nextDay" type="button" aria-label="次の開催日">›</button>
     </div>
-    <div class="tabs" id="tabs" role="tablist" aria-label="開催会場"></div>
+    <div class="tabsrow">
+      <div class="tabs" id="tabs" role="tablist" aria-label="開催会場"></div>
+      <div class="day-summary" id="daysummary"></div>
+    </div>
     <div class="races" id="races" role="tabpanel"></div>
     <footer class="site-foot">
       <p>オッズは取得時点の参考値で、的中・正確性は保証しません。馬券の購入は20歳から。 © 2026 OddsResolver</p>
@@ -463,13 +536,14 @@
 
     let nextTimer = null;
     function renderNext(idx) {
+      const sec = document.getElementById("nextsec");
       const card = document.getElementById("nextcard");
       const upcoming = idx.races
         .map(r => ({ r, at: new Date(`${idx.date}T${r.post_time.padStart(5, "0")}:00`) }))
         .filter(x => !isNaN(x.at) && x.at > nowTime())
         .sort((a, b) => a.at - b.at)[0];
       if (!upcoming) {
-        card.hidden = true;
+        sec.hidden = true;
         if (nextTimer) clearInterval(nextTimer);
         return;
       }
@@ -481,6 +555,7 @@
         `発走 ${r.post_time}` +
         (r.surface ? ` ・ ${r.surface}${r.distance}` : "") +
         ` ・ ${r.n_horses}頭`;
+      fillNextViz(r.race_id);
       const update = () => {
         const ms = at - nowTime();
         if (ms <= 0) { renderNext(idx); return; }
@@ -492,14 +567,53 @@
       update();
       if (nextTimer) clearInterval(nextTimer);
       nextTimer = setInterval(update, 30000);
-      card.hidden = false;
+      sec.hidden = false;
+    }
+
+    async function fillNextViz(raceId) {
+      const el = document.getElementById("nextviz");
+      el.innerHTML = "";
+      try {
+        const res = await fetch(`data/races/${encodeURIComponent(raceId)}.json`);
+        if (!res.ok) return;
+        const race = await res.json();
+        const odds = race.snapshots[race.snapshots.length - 1].odds;
+        const inv = odds.map(o => (o ? 1 / o : 0));
+        const sum = inv.reduce((a, b) => a + b, 0);
+        if (sum <= 0) return;
+        const rows = race.horses
+          .map((h, i) => ({ num: h.num, p: inv[i] / sum }))
+          .sort((a, b) => b.p - a.p)
+          .slice(0, 3);
+        const max = rows[0].p;
+        for (const { num, p } of rows) {
+          const row = document.createElement("div");
+          row.className = "next-viz-row";
+          const n = document.createElement("span");
+          n.textContent = num;
+          const track = document.createElement("span");
+          track.className = "next-viz-track";
+          const fill = document.createElement("span");
+          fill.className = "next-viz-fill";
+          fill.style.width = `${Math.round((p / max) * 100)}%`;
+          track.appendChild(fill);
+          const v = document.createElement("span");
+          v.textContent = `${Math.round(p * 100)}%`;
+          row.append(n, track, v);
+          el.appendChild(row);
+        }
+      } catch {}
     }
 
     async function renderHero(idx) {
+      const sec = document.getElementById("herosec");
       const hero = document.getElementById("hero");
       hero.innerHTML = "";
       const scored = idx.races.filter(r => r.top1 != null);
-      if (scored.length === 0) { hero.hidden = true; return; }
+      if (scored.length === 0) { sec.hidden = true; return; }
+      const [, mm, dd] = idx.date.split("-");
+      document.getElementById("herolabel").textContent =
+        `${Number(mm)}月${Number(dd)}日のピックアップ`;
       const hot = scored.reduce((a, b) => (b.top1 > a.top1 ? b : a));
       const cool = scored.reduce((a, b) => (b.ent > a.ent ? b : a));
 
@@ -534,7 +648,7 @@
 
         fillHeroBar(bar, r.race_id);
       }
-      hero.hidden = false;
+      sec.hidden = false;
     }
 
     async function fillHeroBar(bar, raceId) {
@@ -567,6 +681,18 @@
       const i = days.findIndex(d => d.date === date);
       document.getElementById("prevDay").disabled = i >= days.length - 1;
       document.getElementById("nextDay").disabled = i <= 0;
+
+      const summary = document.getElementById("daysummary");
+      summary.innerHTML = "";
+      const nHot = idx.races.filter(r => raceKind(r) === "hot").length;
+      const nCool = idx.races.filter(r => raceKind(r) === "cool").length;
+      for (const [n, cls, label] of [[nHot, "hot", "一強"], [nCool, "cool", "混戦"]]) {
+        if (!n) continue;
+        const c = document.createElement("span");
+        c.className = `chip ${cls}`;
+        c.textContent = `${label} ${n}`;
+        summary.appendChild(c);
+      }
 
       byVenue = new Map();
       for (const r of idx.races) {
