@@ -56,16 +56,40 @@
       font-family: system-ui, sans-serif;
       line-height: 1.5;
     }
-    main { max-width: 760px; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
-    h1 { font-size: 1.4rem; letter-spacing: 0.04em; margin: 0; }
-    .tagline { color: var(--text-secondary); font-size: 0.85rem; margin: 0.2rem 0 1.25rem; }
+    main { max-width: 760px; margin: 0 auto; padding: 1.25rem 1rem 3rem; }
+
+    /* ヘッダー: ブランドと日付ナビを 1 行に統合 */
+    .masthead {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.8rem 1.2rem;
+      flex-wrap: wrap;
+      margin: 0 0 1.2rem;
+    }
+    .brand { display: flex; align-items: center; gap: 0.6rem; }
+    h1 { font-size: 1.25rem; letter-spacing: 0.04em; margin: 0; }
+    /* ロゴ: 支持率バーのグリフ。一頭が支配する分布の形をそのまま印にする */
+    .brand-mark {
+      display: flex;
+      gap: 2px;
+      width: 2.3rem;
+      height: 0.85rem;
+      border-radius: 3px;
+      overflow: hidden;
+      flex: none;
+    }
+    .brand-mark span { background: var(--accent); }
+    .brand-mark span:nth-child(1) { flex-grow: 5; }
+    .brand-mark span:nth-child(2) { flex-grow: 3; opacity: 0.55; }
+    .brand-mark span:nth-child(3) { flex-grow: 2; opacity: 0.35; }
+    .brand-mark span:nth-child(4) { flex-grow: 1.5; opacity: 0.2; }
 
     /* 日付切り替え */
     .datebar {
       display: flex;
       align-items: center;
       gap: 0.5rem;
-      margin: 0 0 1rem;
     }
     .datenav {
       appearance: none;
@@ -101,7 +125,6 @@
     }
     .dateselect:hover { border-color: var(--accent); }
     .dateselect:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-    .datemeta { color: var(--text-secondary); font-size: 0.8rem; white-space: nowrap; }
 
     /* 歪みハイライト（一強 / 混戦 の対比カード） */
     .hero {
@@ -251,14 +274,17 @@
 </head>
 <body>
   <main>
-    <h1>Odds<span style="opacity:.55">Resolver</span></h1>
-    <p class="tagline">数字の羅列を、動きと歪みの地図へ。</p>
-    <div class="datebar" id="datebar" hidden>
-      <button class="datenav" id="prevDay" type="button" aria-label="前の開催日">‹</button>
-      <select class="dateselect" id="dateselect" aria-label="開催日"></select>
-      <button class="datenav" id="nextDay" type="button" aria-label="次の開催日">›</button>
-      <span class="datemeta" id="datemeta"></span>
-    </div>
+    <header class="masthead">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></span>
+        <h1>Odds<span style="opacity:.55">Resolver</span></h1>
+      </div>
+      <div class="datebar" id="datebar" hidden>
+        <button class="datenav" id="prevDay" type="button" aria-label="前の開催日">‹</button>
+        <select class="dateselect" id="dateselect" aria-label="開催日"></select>
+        <button class="datenav" id="nextDay" type="button" aria-label="次の開催日">›</button>
+      </div>
+    </header>
     <p class="empty" id="status">読み込み中…</p>
     <div class="hero" id="hero" hidden></div>
     <div class="tabs" id="tabs" role="tablist" aria-label="開催会場"></div>
@@ -437,9 +463,6 @@
       const i = days.findIndex(d => d.date === date);
       document.getElementById("prevDay").disabled = i >= days.length - 1; // 過去方向
       document.getElementById("nextDay").disabled = i <= 0;               // 未来方向
-      const meta = days[i];
-      document.getElementById("datemeta").textContent =
-        meta ? `${meta.n_venues}会場 ・ ${meta.n_races}レース` : "";
 
       renderHero(idx);
 
