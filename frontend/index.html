@@ -281,7 +281,12 @@
     }
 
     .race-time { min-width: 2.9em; }
-    .race-dist { min-width: 3.6em; }
+    .race-dist {
+      display: flex;
+      justify-content: space-between;
+      gap: 0.35em;
+      min-width: 4.2em;
+    }
     .race-heads { min-width: 2.6em; }
     .empty { color: var(--text-secondary); padding: 1rem 0; }
 
@@ -394,7 +399,13 @@
 
         const dist = document.createElement("span");
         dist.className = "race-dist";
-        dist.textContent = r.surface ? `${r.surface}${r.distance}` : "";
+        if (r.surface) {
+          const sf = document.createElement("span");
+          sf.textContent = r.surface;
+          const dn = document.createElement("span");
+          dn.textContent = r.distance;
+          dist.append(sf, dn);
+        }
 
         const heads = document.createElement("span");
         heads.className = "race-heads";
