@@ -210,8 +210,8 @@
     .races { display: flex; flex-direction: column; }
     .race-link {
       display: grid;
-      /* R番号 / レース名 / バッジ / 時刻・頭数。バッジと時刻は列として右側に揃える */
-      grid-template-columns: 2.6em minmax(0, 1fr) auto auto;
+      /* R番号 / レース名 / バッジ / 時刻 / 頭数。右側の各列は独立して縦に揃える */
+      grid-template-columns: 2.6em minmax(0, 1fr) auto auto auto;
       align-items: center;
       gap: 0.7rem;
       padding: 0.6rem 0.6rem;
@@ -236,13 +236,16 @@
       white-space: nowrap;
       min-width: 0;
     }
-    .race-sub {
+    .race-time, .race-heads {
       color: var(--text-secondary);
       font-size: 0.8rem;
       white-space: nowrap;
       font-variant-numeric: tabular-nums;
       text-align: right;
     }
+    /* 桁数（5頭/12頭・9:07/15:35）の違いで揺れないよう最小幅で固定する */
+    .race-time { min-width: 2.9em; }
+    .race-heads { min-width: 2.6em; }
     .empty { color: var(--text-secondary); padding: 1rem 0; }
   </style>
 </head>
@@ -333,11 +336,15 @@
           chipCell.textContent = kind === "hot" ? "一強" : "混戦";
         }
 
-        const sub = document.createElement("span");
-        sub.className = "race-sub";
-        sub.textContent = `${r.post_time} ・ ${r.n_horses}頭`;
+        const time = document.createElement("span");
+        time.className = "race-time";
+        time.textContent = r.post_time;
 
-        a.append(no, name, chipCell, sub);
+        const heads = document.createElement("span");
+        heads.className = "race-heads";
+        heads.textContent = `${r.n_horses}頭`;
+
+        a.append(no, name, chipCell, time, heads);
         panel.appendChild(a);
       }
     }
