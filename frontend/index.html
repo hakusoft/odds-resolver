@@ -67,23 +67,30 @@
       flex-wrap: wrap;
       margin: 0 0 1.2rem;
     }
-    .brand { display: flex; align-items: center; gap: 0.6rem; }
-    h1 { font-size: 1.25rem; letter-spacing: 0.04em; margin: 0; }
-    /* ロゴ: 支持率バーのグリフ。一頭が支配する分布の形をそのまま印にする */
-    .brand-mark {
+    .brand {
       display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      text-decoration: none;
+      color: inherit;
+    }
+    .brand:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+    h1 { font-size: 1.25rem; letter-spacing: 0.04em; margin: 0; }
+    /* ロゴ: 馬×時間ヒートマップのミニ格子。1 マスだけ暖色 = 地図の中の歪み */
+    .brand-mark {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
       gap: 2px;
-      width: 2.3rem;
-      height: 0.85rem;
-      border-radius: 3px;
-      overflow: hidden;
+      width: 1.65rem;
+      height: 1.05rem;
       flex: none;
     }
-    .brand-mark span { background: var(--accent); }
-    .brand-mark span:nth-child(1) { flex-grow: 5; }
-    .brand-mark span:nth-child(2) { flex-grow: 3; opacity: 0.55; }
-    .brand-mark span:nth-child(3) { flex-grow: 2; opacity: 0.35; }
-    .brand-mark span:nth-child(4) { flex-grow: 1.5; opacity: 0.2; }
+    .brand-mark span { background: var(--accent); border-radius: 2px; }
+    .brand-mark span:nth-child(2) { opacity: 0.3; }
+    .brand-mark span:nth-child(3) { background: var(--hot); opacity: 0.95; }
+    .brand-mark span:nth-child(4) { opacity: 0.18; }
+    .brand-mark span:nth-child(5) { opacity: 0.7; }
+    .brand-mark span:nth-child(6) { opacity: 0.45; }
 
     /* 日付切り替え */
     .datebar {
@@ -275,10 +282,10 @@
 <body>
   <main>
     <header class="masthead">
-      <div class="brand">
-        <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></span>
+      <a class="brand" href="./">
+        <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span></span>
         <h1>Odds<span style="opacity:.55">Resolver</span></h1>
-      </div>
+      </a>
       <div class="datebar" id="datebar" hidden>
         <button class="datenav" id="prevDay" type="button" aria-label="前の開催日">‹</button>
         <select class="dateselect" id="dateselect" aria-label="開催日"></select>
