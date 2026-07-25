@@ -40,13 +40,26 @@ jobs:
           aws-region: ap-northeast-1
 
       # --delete で前回の残骸を消す。frontend バケットは毎回まるごと置き換える。
-      # index.html は再検証必須（no-cache）、それ以外の静的アセットは長めに持たせる。
+      # キャッシュは変更頻度で分ける:
+      #   - index.html            … no-cache（再検証必須）
+      #   - days.json / 日別index … max-age=60。日々更新される目次類。長く持たせると
+      #                             ブラウザ側に旧データが残り、新 JS が旧データを読む
+      #   - races/*.json ほか     … max-age=3600。確定レースは不変なので長くてよい
       - name: Sync frontend to S3
         run: |
           aws s3 sync frontend/ "s3://${FRONTEND_BUCKET}/" \
             --delete \
             --exclude "index.html" \
+            --exclude "data/days.json" \
+            --exclude "data/*/index.json" \
             --cache-control "public, max-age=3600"
+          # 目次類は sync だと内容未変更時にメタデータが更新されないため cp で毎回上書きする
+          aws s3 cp "frontend/data/" "s3://${FRONTEND_BUCKET}/data/" \
+            --recursive \
+            --exclude "*" \
+            --include "days.json" \
+            --include "*/index.json" \
+            --cache-control "public, max-age=60"
           aws s3 cp frontend/index.html "s3://${FRONTEND_BUCKET}/index.html" \
             --cache-control "no-cache"
 
