@@ -97,6 +97,17 @@
     th, td { border: 1px solid var(--border); padding: 0.25rem 0.5rem; text-align: right; }
     th:first-child, td:first-child { text-align: left; }
     thead th { background: var(--surface-2); }
+
+    /* フッター: 免責と表記。本文と同じ静かなトーンで */
+    .site-foot {
+      margin-top: 2.5rem;
+      padding-top: 0.9rem;
+      border-top: 1px solid var(--border);
+      color: var(--text-secondary);
+      font-size: 0.75rem;
+      line-height: 1.7;
+    }
+    .site-foot p { margin: 0; }
   </style>
 </head>
 <body>
@@ -123,6 +134,10 @@
       <summary>データ表で見る（最終スナップショットのオッズ）</summary>
       <div class="chart-scroll"><table id="data-table"></table></div>
     </details>
+    <footer class="site-foot">
+      <p>オッズは取得時点の参考値です。的中・正確性を保証するものではありません。</p>
+      <p>馬券の購入は20歳になってから。 © 2026 OddsResolver</p>
+    </footer>
   </main>
   <div id="tooltip" role="status"></div>
 
