@@ -5,48 +5,54 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>OddsResolver</title>
   <style>
+    /* テーマ「ナイター紺」: 瑠璃紺のアクセント + 寒色寄りの中立色。
+       accent/hot/cool の分離は dataviz の validate_palette で両モード検証済み */
     :root {
       color-scheme: light dark;
-      --surface-1: #fcfcfb;
-      --surface-2: #f0efec;
-      --text-primary: #0b0b0b;
-      --text-secondary: #52514e;
-      --border: #d8d7d2;
-      --accent: #2a78d6;
-      --hot: #b8432c;   /* 一強（過熱） */
-      --cool: #21708b;  /* 混戦（拮抗） */
+      --surface-1: #fbfcfd;
+      --surface-2: #eff1f5;
+      --text-primary: #0b0c0f;
+      --text-secondary: #4f5560;
+      --border: #d6dae1;
+      --accent: #1e50a2;    /* 瑠璃紺 */
+      --on-accent: #ffffff; /* accent 面上の文字色 */
+      --hot: #b8432c;       /* 一強（過熱） */
+      --cool: #0e8f7e;      /* 混戦（拮抗） */
     }
     @media (prefers-color-scheme: dark) {
       :root {
-        --surface-1: #1a1a19;
-        --surface-2: #262625;
+        --surface-1: #17181b;
+        --surface-2: #222429;
         --text-primary: #ffffff;
-        --text-secondary: #c3c2b7;
-        --border: #3d3d3a;
-        --accent: #3987e5;
+        --text-secondary: #bac0cc;
+        --border: #383c44;
+        --accent: #6487e6;
+        --on-accent: #10131a;
         --hot: #e0674c;
-        --cool: #4fa3c0;
+        --cool: #1e9d89;
       }
     }
     :root[data-theme="light"] {
-      --surface-1: #fcfcfb;
-      --surface-2: #f0efec;
-      --text-primary: #0b0b0b;
-      --text-secondary: #52514e;
-      --border: #d8d7d2;
-      --accent: #2a78d6;
+      --surface-1: #fbfcfd;
+      --surface-2: #eff1f5;
+      --text-primary: #0b0c0f;
+      --text-secondary: #4f5560;
+      --border: #d6dae1;
+      --accent: #1e50a2;
+      --on-accent: #ffffff;
       --hot: #b8432c;
-      --cool: #21708b;
+      --cool: #0e8f7e;
     }
     :root[data-theme="dark"] {
-      --surface-1: #1a1a19;
-      --surface-2: #262625;
+      --surface-1: #17181b;
+      --surface-2: #222429;
       --text-primary: #ffffff;
-      --text-secondary: #c3c2b7;
-      --border: #3d3d3a;
-      --accent: #3987e5;
+      --text-secondary: #bac0cc;
+      --border: #383c44;
+      --accent: #6487e6;
+      --on-accent: #10131a;
       --hot: #e0674c;
-      --cool: #4fa3c0;
+      --cool: #1e9d89;
     }
     * { box-sizing: border-box; }
     body {
@@ -225,7 +231,7 @@
     .tab[aria-selected="true"] {
       background: var(--accent);
       border-color: var(--accent);
-      color: #fff;
+      color: var(--on-accent); /* ダークでは明るい accent に暗い文字（コントラスト確保） */
       font-weight: 600;
     }
     .tab .count {
