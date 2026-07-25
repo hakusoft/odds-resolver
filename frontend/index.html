@@ -13,6 +13,8 @@
       --text-secondary: #52514e;
       --border: #d8d7d2;
       --accent: #2a78d6;
+      --hot: #b8432c;   /* 一強（過熱） */
+      --cool: #21708b;  /* 混戦（拮抗） */
     }
     @media (prefers-color-scheme: dark) {
       :root {
@@ -22,6 +24,8 @@
         --text-secondary: #c3c2b7;
         --border: #3d3d3a;
         --accent: #3987e5;
+        --hot: #e0674c;
+        --cool: #4fa3c0;
       }
     }
     :root[data-theme="light"] {
@@ -31,6 +35,8 @@
       --text-secondary: #52514e;
       --border: #d8d7d2;
       --accent: #2a78d6;
+      --hot: #b8432c;
+      --cool: #21708b;
     }
     :root[data-theme="dark"] {
       --surface-1: #1a1a19;
@@ -39,6 +45,8 @@
       --text-secondary: #c3c2b7;
       --border: #3d3d3a;
       --accent: #3987e5;
+      --hot: #e0674c;
+      --cool: #4fa3c0;
     }
     * { box-sizing: border-box; }
     body {
@@ -94,6 +102,73 @@
     .dateselect:hover { border-color: var(--accent); }
     .dateselect:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     .datemeta { color: var(--text-secondary); font-size: 0.8rem; white-space: nowrap; }
+
+    /* 歪みハイライト（一強 / 混戦 の対比カード） */
+    .hero {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.6rem;
+      margin: 0 0 1.1rem;
+    }
+    @media (max-width: 560px) { .hero { grid-template-columns: 1fr; } }
+    .hero-card {
+      display: block;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.7rem 0.9rem 0.8rem;
+      text-decoration: none;
+      color: var(--text-primary);
+      background: var(--surface-1);
+    }
+    .hero-card:hover, .hero-card:focus-visible {
+      background: var(--surface-2);
+      outline: none;
+    }
+    .hero-card.hot { border-color: color-mix(in srgb, var(--hot) 45%, var(--border)); }
+    .hero-card.cool { border-color: color-mix(in srgb, var(--cool) 45%, var(--border)); }
+    .hero-label {
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+    }
+    .hot .hero-label { color: var(--hot); }
+    .cool .hero-label { color: var(--cool); }
+    .hero-title {
+      margin: 0.15rem 0 0.1rem;
+      font-weight: 600;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .hero-stat {
+      color: var(--text-secondary);
+      font-size: 0.8rem;
+      font-variant-numeric: tabular-nums;
+    }
+    .hero-bar {
+      display: flex;
+      gap: 2px;
+      height: 8px;
+      margin-top: 0.55rem;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .hero-bar span { min-width: 2px; }
+    .hot .hero-bar span { background: var(--hot); }
+    .cool .hero-bar span { background: var(--cool); }
+
+    /* 一強 / 混戦 バッジ */
+    .chip {
+      flex: none;
+      font-size: 0.68rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      padding: 0.05rem 0.45rem;
+      border-radius: 999px;
+      border: 1px solid;
+    }
+    .chip.hot { color: var(--hot); border-color: color-mix(in srgb, var(--hot) 55%, transparent); }
+    .chip.cool { color: var(--cool); border-color: color-mix(in srgb, var(--cool) 55%, transparent); }
 
     /* 会場タブ */
     .tabs {
@@ -154,6 +229,12 @@
       color: var(--accent);
       text-align: right;
     }
+    .race-mid {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      min-width: 0;
+    }
     .race-name {
       overflow: hidden;
       text-overflow: ellipsis;
@@ -181,6 +262,7 @@
       <span class="datemeta" id="datemeta"></span>
     </div>
     <p class="empty" id="status">読み込み中…</p>
+    <div class="hero" id="hero" hidden></div>
     <div class="tabs" id="tabs" role="tablist" aria-label="開催会場"></div>
     <div class="races" id="races" role="tabpanel"></div>
   </main>
@@ -242,18 +324,103 @@
         no.className = "race-no";
         no.textContent = `${r.race_no}R`;
 
+        const mid = document.createElement("span");
+        mid.className = "race-mid";
         const name = document.createElement("span");
         name.className = "race-name";
         name.textContent = shortName(r.name);
         name.title = r.name; // 生表記全文はツールチップで確認できる
+        mid.appendChild(name);
+        const kind = raceKind(r);
+        if (kind) {
+          const chip = document.createElement("span");
+          chip.className = `chip ${kind}`;
+          chip.textContent = kind === "hot" ? "一強" : "混戦";
+          mid.appendChild(chip);
+        }
 
         const sub = document.createElement("span");
         sub.className = "race-sub";
         sub.textContent = `${r.post_time} ・ ${r.n_horses}頭`;
 
-        a.append(no, name, sub);
+        a.append(no, mid, sub);
         panel.appendChild(a);
       }
+    }
+
+    // 指標のバッジ判定。index.json の top1（1番人気支持率）と ent（混戦度）に
+    // 閾値を当てる。閾値は表示の判断なのでフロント側に置く。
+    const TOP1_MIN = 0.60; // これ以上なら「一強」
+    const ENT_MIN = 0.84;  // これ以上なら「混戦」
+    function raceKind(r) {
+      if (r.top1 == null) return null; // 中止・欠測（指標なし）
+      if (r.top1 >= TOP1_MIN) return "hot";
+      if (r.ent >= ENT_MIN) return "cool";
+      return null;
+    }
+
+    // 上段: その日で最も「一強」なレースと最も「混戦」なレースを対比で見せる。
+    async function renderHero(idx) {
+      const hero = document.getElementById("hero");
+      hero.innerHTML = "";
+      const scored = idx.races.filter(r => r.top1 != null);
+      if (scored.length === 0) { hero.hidden = true; return; }
+      const hot = scored.reduce((a, b) => (b.top1 > a.top1 ? b : a));
+      const cool = scored.reduce((a, b) => (b.ent > a.ent ? b : a));
+
+      const defs = [
+        { r: hot, cls: "hot", label: "本命一強" },
+        { r: cool, cls: "cool", label: "大混戦" },
+      ];
+      for (const { r, cls, label } of defs) {
+        const a = document.createElement("a");
+        a.className = `hero-card ${cls}`;
+        a.href = `race.html?id=${encodeURIComponent(r.race_id)}`;
+
+        const lb = document.createElement("div");
+        lb.className = "hero-label";
+        lb.textContent = label;
+
+        const tt = document.createElement("div");
+        tt.className = "hero-title";
+        tt.textContent = `${r.venue} ${r.race_no}R ・ ${shortName(r.name)}`;
+        tt.title = r.name;
+
+        const st = document.createElement("div");
+        st.className = "hero-stat";
+        st.textContent =
+          `1番人気 支持率${Math.round(r.top1 * 100)}% ・ 発走 ${r.post_time} ・ ${r.n_horses}頭`;
+
+        const bar = document.createElement("div");
+        bar.className = "hero-bar";
+
+        a.append(lb, tt, st, bar);
+        hero.appendChild(a);
+
+        // 支持率バー: 各馬の支持率を大きい順に並べた比例セグメント。
+        // レース詳細 JSON を読むのは上段の 2 レースだけ。
+        fillHeroBar(bar, r.race_id);
+      }
+      hero.hidden = false;
+    }
+
+    async function fillHeroBar(bar, raceId) {
+      try {
+        const res = await fetch(`data/races/${encodeURIComponent(raceId)}.json`);
+        if (!res.ok) return;
+        const race = await res.json();
+        const odds = race.snapshots[race.snapshots.length - 1].odds;
+        const inv = odds.map(o => (o ? 1 / o : 0));
+        const s = inv.reduce((a, b) => a + b, 0);
+        if (s <= 0) return;
+        const sup = inv.map(x => x / s).sort((a, b) => b - a);
+        for (const p of sup) {
+          const seg = document.createElement("span");
+          seg.style.flexGrow = String(p);
+          seg.style.opacity = String(0.35 + 0.65 * (p / sup[0]));
+          bar.appendChild(seg);
+        }
+      } catch { /* バーは装飾。失敗しても本文には影響させない */ }
     }
 
     // 開催日を切り替える。日別 index を読み、会場タブとレース一覧を作り直す。
@@ -272,6 +439,8 @@
       const meta = days[i];
       document.getElementById("datemeta").textContent =
         meta ? `${meta.n_venues}会場 ・ ${meta.n_races}レース` : "";
+
+      renderHero(idx);
 
       // フラットな races を会場でグループ化し、R 番号順に並べる。
       byVenue = new Map();
