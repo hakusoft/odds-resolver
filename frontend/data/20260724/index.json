@@ -9,7 +9,9 @@
    "post_time": "14:25",
    "n_horses": 12,
    "top1": 0.431,
-   "ent": 0.584
+   "ent": 0.584,
+   "surface": "ダ",
+   "distance": 1400
   },
   {
    "race_id": "202607242726100302",
@@ -19,7 +21,9 @@
    "post_time": "15:00",
    "n_horses": 12,
    "top1": 0.417,
-   "ent": 0.636
+   "ent": 0.636,
+   "surface": "ダ",
+   "distance": 1400
   },
   {
    "race_id": "202607242726100303",
@@ -29,7 +33,9 @@
    "post_time": "15:30",
    "n_horses": 5,
    "top1": 0.477,
-   "ent": 0.606
+   "ent": 0.606,
+   "surface": "ダ",
+   "distance": 1400
   },
   {
    "race_id": "202607242726100304",
@@ -39,7 +45,9 @@
    "post_time": "16:05",
    "n_horses": 12,
    "top1": 0.612,
-   "ent": 0.56
+   "ent": 0.56,
+   "surface": "ダ",
+   "distance": 820
   },
   {
    "race_id": "202607242726100305",
@@ -49,7 +57,9 @@
    "post_time": "16:40",
    "n_horses": 8,
    "top1": 0.328,
-   "ent": 0.713
+   "ent": 0.713,
+   "surface": "ダ",
+   "distance": 1400
   },
   {
    "race_id": "202607242726100306",
@@ -59,7 +69,9 @@
    "post_time": "17:15",
    "n_horses": 9,
    "top1": 0.373,
-   "ent": 0.722
+   "ent": 0.722,
+   "surface": "ダ",
+   "distance": 1400
   },
   {
    "race_id": "202607242726100307",
@@ -69,7 +81,9 @@
    "post_time": "17:45",
    "n_horses": 9,
    "top1": 0.233,
-   "ent": 0.841
+   "ent": 0.841,
+   "surface": "ダ",
+   "distance": 1400
   },
   {
    "race_id": "202607242726100308",
@@ -79,7 +93,9 @@
    "post_time": "18:15",
    "n_horses": 9,
    "top1": 0.462,
-   "ent": 0.733
+   "ent": 0.733,
+   "surface": "ダ",
+   "distance": 1400
   },
   {
    "race_id": "202607242726100309",
@@ -89,7 +105,9 @@
    "post_time": "18:45",
    "n_horses": 6,
    "top1": 0.561,
-   "ent": 0.691
+   "ent": 0.691,
+   "surface": "ダ",
+   "distance": 1400
   },
   {
    "race_id": "202607242726100310",
@@ -99,7 +117,9 @@
    "post_time": "19:20",
    "n_horses": 10,
    "top1": 0.241,
-   "ent": 0.889
+   "ent": 0.889,
+   "surface": "ダ",
+   "distance": 1230
   },
   {
    "race_id": "202607242726100311",
@@ -109,7 +129,9 @@
    "post_time": "19:55",
    "n_horses": 12,
    "top1": 0.517,
-   "ent": 0.587
+   "ent": 0.587,
+   "surface": "ダ",
+   "distance": 1400
   },
   {
    "race_id": "202607242726100312",
@@ -119,7 +141,9 @@
    "post_time": "20:30",
    "n_horses": 11,
    "top1": 0.265,
-   "ent": 0.863
+   "ent": 0.863,
+   "surface": "ダ",
+   "distance": 1230
   },
   {
    "race_id": "202607242015060501",
@@ -129,7 +153,9 @@
    "post_time": "14:50",
    "n_horses": 15,
    "top1": 0.416,
-   "ent": 0.602
+   "ent": 0.602,
+   "surface": "ダ",
+   "distance": 1800
   },
   {
    "race_id": "202607242015060502",
@@ -139,7 +165,9 @@
    "post_time": "15:22",
    "n_horses": 5,
    "top1": 0.526,
-   "ent": 0.635
+   "ent": 0.635,
+   "surface": "ダ",
+   "distance": 1400
   },
   {
    "race_id": "202607242015060503",
@@ -149,7 +177,9 @@
    "post_time": "15:54",
    "n_horses": 5,
    "top1": 0.523,
-   "ent": 0.775
+   "ent": 0.775,
+   "surface": "ダ",
+   "distance": 1200
   },
   {
    "race_id": "202607242015060504",
@@ -159,7 +189,9 @@
    "post_time": "16:26",
    "n_horses": 11,
    "top1": 0.634,
-   "ent": 0.58
+   "ent": 0.58,
+   "surface": "ダ",
+   "distance": 1600
   },
   {
    "race_id": "202607242015060505",
@@ -167,7 +199,9 @@
    "race_no": 5,
    "name": "３歳一二三",
    "post_time": "16:58",
-   "n_horses": 13
+   "n_horses": 13,
+   "surface": "ダ",
+   "distance": 1400
   },
   {
    "race_id": "202607242015060506",
@@ -175,7 +209,9 @@
    "race_no": 6,
    "name": "３歳一二三",
    "post_time": "17:40",
-   "n_horses": 15
+   "n_horses": 15,
+   "surface": "ダ",
+   "distance": 1200
   },
   {
    "race_id": "202607242015060507",
@@ -185,7 +221,9 @@
    "post_time": "18:02",
    "n_horses": 9,
    "top1": 0.395,
-   "ent": 0.777
+   "ent": 0.777,
+   "surface": "ダ",
+   "distance": 2000
   },
   {
    "race_id": "202607242015060508",
@@ -195,7 +233,9 @@
    "post_time": "18:35",
    "n_horses": 12,
    "top1": 0.414,
-   "ent": 0.649
+   "ent": 0.649,
+   "surface": "ダ",
+   "distance": 1000
   },
   {
    "race_id": "202607242015060509",
@@ -205,7 +245,9 @@
    "post_time": "19:07",
    "n_horses": 12,
    "top1": 0.589,
-   "ent": 0.589
+   "ent": 0.589,
+   "surface": "ダ",
+   "distance": 1600
   },
   {
    "race_id": "202607242015060510",
@@ -215,7 +257,9 @@
    "post_time": "19:40",
    "n_horses": 14,
    "top1": 0.361,
-   "ent": 0.728
+   "ent": 0.728,
+   "surface": "ダ",
+   "distance": 1400
   },
   {
    "race_id": "202607242015060511",
@@ -225,7 +269,9 @@
    "post_time": "20:15",
    "n_horses": 16,
    "top1": 0.248,
-   "ent": 0.846
+   "ent": 0.846,
+   "surface": "ダ",
+   "distance": 1400
   },
   {
    "race_id": "202607242015060512",
@@ -235,7 +281,9 @@
    "post_time": "20:50",
    "n_horses": 9,
    "top1": 0.748,
-   "ent": 0.48
+   "ent": 0.48,
+   "surface": "ダ",
+   "distance": 1200
   },
   {
    "race_id": "202607242320060401",
@@ -245,7 +293,9 @@
    "post_time": "10:50",
    "n_horses": 8,
    "top1": 0.344,
-   "ent": 0.797
+   "ent": 0.797,
+   "surface": "ダ",
+   "distance": 1400
   },
   {
    "race_id": "202607242320060402",
@@ -255,7 +305,9 @@
    "post_time": "11:25",
    "n_horses": 6,
    "top1": 0.699,
-   "ent": 0.59
+   "ent": 0.59,
+   "surface": "ダ",
+   "distance": 800
   },
   {
    "race_id": "202607242320060403",
@@ -265,7 +317,9 @@
    "post_time": "12:00",
    "n_horses": 5,
    "top1": 0.599,
-   "ent": 0.685
+   "ent": 0.685,
+   "surface": "ダ",
+   "distance": 1400
   },
   {
    "race_id": "202607242320060404",
@@ -275,7 +329,9 @@
    "post_time": "12:30",
    "n_horses": 7,
    "top1": 0.392,
-   "ent": 0.719
+   "ent": 0.719,
+   "surface": "ダ",
+   "distance": 1400
   },
   {
    "race_id": "202607242320060405",
@@ -285,7 +341,9 @@
    "post_time": "13:00",
    "n_horses": 6,
    "top1": 0.601,
-   "ent": 0.617
+   "ent": 0.617,
+   "surface": "ダ",
+   "distance": 1400
   },
   {
    "race_id": "202607242320060406",
@@ -295,7 +353,9 @@
    "post_time": "13:35",
    "n_horses": 8,
    "top1": 0.41,
-   "ent": 0.657
+   "ent": 0.657,
+   "surface": "ダ",
+   "distance": 1400
   },
   {
    "race_id": "202607242320060407",
@@ -305,7 +365,9 @@
    "post_time": "14:10",
    "n_horses": 8,
    "top1": 0.53,
-   "ent": 0.577
+   "ent": 0.577,
+   "surface": "ダ",
+   "distance": 1400
   },
   {
    "race_id": "202607242320060408",
@@ -315,7 +377,9 @@
    "post_time": "14:40",
    "n_horses": 7,
    "top1": 0.762,
-   "ent": 0.464
+   "ent": 0.464,
+   "surface": "ダ",
+   "distance": 1580
   },
   {
    "race_id": "202607242320060409",
@@ -325,7 +389,9 @@
    "post_time": "15:15",
    "n_horses": 7,
    "top1": 0.306,
-   "ent": 0.902
+   "ent": 0.902,
+   "surface": "ダ",
+   "distance": 1400
   },
   {
    "race_id": "202607242320060410",
@@ -335,7 +401,9 @@
    "post_time": "15:45",
    "n_horses": 8,
    "top1": 0.395,
-   "ent": 0.639
+   "ent": 0.639,
+   "surface": "ダ",
+   "distance": 1400
   },
   {
    "race_id": "202607242320060411",
@@ -345,7 +413,9 @@
    "post_time": "16:20",
    "n_horses": 7,
    "top1": 0.433,
-   "ent": 0.74
+   "ent": 0.74,
+   "surface": "ダ",
+   "distance": 1400
   },
   {
    "race_id": "202607242320060412",
@@ -355,7 +425,9 @@
    "post_time": "16:55",
    "n_horses": 10,
    "top1": 0.359,
-   "ent": 0.758
+   "ent": 0.758,
+   "surface": "ダ",
+   "distance": 1580
   }
  ]
 }

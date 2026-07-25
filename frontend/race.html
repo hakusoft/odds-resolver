@@ -161,7 +161,9 @@
       const race = await res.json();
 
       document.getElementById("race-meta").textContent =
-        `${race.venue} ${race.race_no}R ${race.name} / 発走 ${race.post_time}`;
+        `${race.venue} ${race.race_no}R ${race.name}` +
+        (race.surface ? ` ${race.surface}${race.distance}m` : "") +
+        ` / 発走 ${race.post_time}`;
       document.title = `OddsResolver — ${race.name}`;
 
       const support = race.snapshots.map(s => {
