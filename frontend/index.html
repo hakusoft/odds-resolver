@@ -210,7 +210,8 @@
     .races { display: flex; flex-direction: column; }
     .race-link {
       display: grid;
-      grid-template-columns: 2.6em 1fr auto;
+      /* R番号 / レース名 / バッジ / 時刻・頭数。バッジと時刻は列として右側に揃える */
+      grid-template-columns: 2.6em minmax(0, 1fr) auto auto;
       align-items: center;
       gap: 0.7rem;
       padding: 0.6rem 0.6rem;
@@ -228,12 +229,6 @@
       font-variant-numeric: tabular-nums;
       color: var(--accent);
       text-align: right;
-    }
-    .race-mid {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      min-width: 0;
     }
     .race-name {
       overflow: hidden;
@@ -324,26 +319,25 @@
         no.className = "race-no";
         no.textContent = `${r.race_no}R`;
 
-        const mid = document.createElement("span");
-        mid.className = "race-mid";
         const name = document.createElement("span");
         name.className = "race-name";
         name.textContent = shortName(r.name);
         name.title = r.name; // 生表記全文はツールチップで確認できる
-        mid.appendChild(name);
+
+        // バッジは独立した列に置き、行を跨いで右側で縦に揃える。
+        // バッジ無しの行にも空セルを置いて列ずれを防ぐ。
+        const chipCell = document.createElement("span");
         const kind = raceKind(r);
         if (kind) {
-          const chip = document.createElement("span");
-          chip.className = `chip ${kind}`;
-          chip.textContent = kind === "hot" ? "一強" : "混戦";
-          mid.appendChild(chip);
+          chipCell.className = `chip ${kind}`;
+          chipCell.textContent = kind === "hot" ? "一強" : "混戦";
         }
 
         const sub = document.createElement("span");
         sub.className = "race-sub";
         sub.textContent = `${r.post_time} ・ ${r.n_horses}頭`;
 
-        a.append(no, mid, sub);
+        a.append(no, name, chipCell, sub);
         panel.appendChild(a);
       }
     }
