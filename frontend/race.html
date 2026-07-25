@@ -45,6 +45,7 @@
       --accent: #84a0c6;
       --hot: #e27878;
     }
+    :root { --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
     body {
       margin: 0;
       background: var(--surface-1);
@@ -87,7 +88,7 @@
       color: inherit;
     }
     .brand:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
-    h1 { font-size: 1.7rem; font-weight: 700; letter-spacing: 0.12em; margin: 0; }
+    h1 { font-family: var(--font-mono); font-size: 1.55rem; font-weight: 700; letter-spacing: 0.06em; margin: 0; }
 
     .brand-mark {
       display: grid;

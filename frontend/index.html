@@ -54,6 +54,7 @@
       --cool: #e0c88a;
     }
     * { box-sizing: border-box; }
+    :root { --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
     body {
       margin: 0;
       background: var(--surface-1);
@@ -96,7 +97,7 @@
       color: inherit;
     }
     .brand:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
-    h1 { font-size: 1.7rem; font-weight: 700; letter-spacing: 0.12em; margin: 0; }
+    h1 { font-family: var(--font-mono); font-size: 1.55rem; font-weight: 700; letter-spacing: 0.06em; margin: 0; }
 
     .brand-mark {
       display: grid;
@@ -159,9 +160,9 @@
       grid-template-columns: 1.4em minmax(0, 1fr) 2.8em;
       align-items: center;
       gap: 0.45em;
+      font-family: var(--font-mono);
       font-size: 0.7rem;
       color: var(--text-secondary);
-      font-variant-numeric: tabular-nums;
     }
     .next-viz-row > span:first-child { text-align: right; }
     .next-viz-row > span:last-child { text-align: right; }
@@ -179,10 +180,10 @@
       border-radius: 3px;
     }
     .next-count {
+      font-family: var(--font-mono);
       font-size: 0.85rem;
       font-weight: 700;
       color: var(--accent);
-      font-variant-numeric: tabular-nums;
       white-space: nowrap;
     }
     .list-head {
@@ -349,8 +350,8 @@
       outline: none;
     }
     .race-no {
+      font-family: var(--font-mono);
       font-weight: 700;
-      font-variant-numeric: tabular-nums;
       color: var(--accent);
       text-align: right;
     }
@@ -361,10 +362,10 @@
       min-width: 0;
     }
     .race-time, .race-dist, .race-heads {
+      font-family: var(--font-mono);
       color: var(--text-secondary);
-      font-size: 0.8rem;
+      font-size: 0.78rem;
       white-space: nowrap;
-      font-variant-numeric: tabular-nums;
       text-align: right;
     }
 
