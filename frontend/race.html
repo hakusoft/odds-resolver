@@ -5,25 +5,26 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>OddsResolver</title>
   <style>
+    /* テーマ「ナイター紺」: index.html とトークンを揃える。
+       テキスト・面はロールで持つ。ヒートマップの色は JS 側の ramp で塗る */
     :root {
       color-scheme: light dark;
-      /* テキスト・面はロールで持つ。ヒートマップの色は JS 側の ramp で塗る */
-      --surface-1: #fcfcfb;
-      --surface-2: #f0efec;
-      --text-primary: #0b0b0b;
-      --text-secondary: #52514e;
-      --border: #d8d7d2;
-      --accent: #2a78d6;
+      --surface-1: #fbfcfd;
+      --surface-2: #eff1f5;
+      --text-primary: #0b0c0f;
+      --text-secondary: #4f5560;
+      --border: #d6dae1;
+      --accent: #1e50a2;
       --hot: #b8432c;
     }
     @media (prefers-color-scheme: dark) {
       :root {
-        --surface-1: #1a1a19;
-        --surface-2: #262625;
+        --surface-1: #17181b;
+        --surface-2: #222429;
         --text-primary: #ffffff;
-        --text-secondary: #c3c2b7;
-        --border: #3d3d3a;
-        --accent: #3987e5;
+        --text-secondary: #bac0cc;
+        --border: #383c44;
+        --accent: #6487e6;
         --hot: #e0674c;
       }
     }
