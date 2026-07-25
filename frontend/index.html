@@ -277,6 +277,17 @@
     .race-time { min-width: 2.9em; }
     .race-heads { min-width: 2.6em; }
     .empty { color: var(--text-secondary); padding: 1rem 0; }
+
+    /* フッター: 免責と表記。本文と同じ静かなトーンで */
+    .site-foot {
+      margin-top: 2.5rem;
+      padding-top: 0.9rem;
+      border-top: 1px solid var(--border);
+      color: var(--text-secondary);
+      font-size: 0.75rem;
+      line-height: 1.7;
+    }
+    .site-foot p { margin: 0; }
   </style>
 </head>
 <body>
@@ -296,6 +307,10 @@
     <div class="hero" id="hero" hidden></div>
     <div class="tabs" id="tabs" role="tablist" aria-label="開催会場"></div>
     <div class="races" id="races" role="tabpanel"></div>
+    <footer class="site-foot">
+      <p>オッズは取得時点の参考値です。的中・正確性を保証するものではありません。</p>
+      <p>馬券の購入は20歳になってから。 © 2026 OddsResolver</p>
+    </footer>
   </main>
 
   <script>
