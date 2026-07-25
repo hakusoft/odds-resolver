@@ -96,11 +96,20 @@
     .brand-mark span:nth-child(5) { opacity: 0.7; }
     .brand-mark span:nth-child(6) { opacity: 0.45; }
 
+    .listbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 0.8rem;
+      flex-wrap: wrap;
+      border-bottom: 1px solid var(--border);
+      margin: 0 0 1rem;
+    }
     .datebar {
       display: flex;
       align-items: center;
-      gap: 0.5rem;
-      margin: 0 0 1rem;
+      gap: 0.4rem;
+      margin: 0 0 0.45rem;
     }
     .datenav {
       appearance: none;
@@ -206,8 +215,6 @@
       display: flex;
       flex-wrap: wrap;
       gap: 1.2rem;
-      margin: 0 0 1rem;
-      border-bottom: 1px solid var(--border);
     }
     .tab {
       appearance: none;
@@ -240,7 +247,7 @@
     .race-link {
       display: grid;
 
-      grid-template-columns: 2.6em minmax(0, 1fr) auto auto auto;
+      grid-template-columns: 2.6em minmax(0, 1fr) auto auto auto auto;
       align-items: center;
       gap: 0.7rem;
       padding: 0.6rem 0.6rem;
@@ -265,7 +272,7 @@
       white-space: nowrap;
       min-width: 0;
     }
-    .race-time, .race-heads {
+    .race-time, .race-dist, .race-heads {
       color: var(--text-secondary);
       font-size: 0.8rem;
       white-space: nowrap;
@@ -274,6 +281,7 @@
     }
 
     .race-time { min-width: 2.9em; }
+    .race-dist { min-width: 3.6em; }
     .race-heads { min-width: 2.6em; }
     .empty { color: var(--text-secondary); padding: 1rem 0; }
 
@@ -298,12 +306,14 @@
     </header>
     <p class="empty" id="status">読み込み中…</p>
     <div class="hero" id="hero" hidden></div>
-    <div class="datebar" id="datebar" hidden>
-      <button class="datenav" id="prevDay" type="button" aria-label="前の開催日">‹</button>
-      <select class="dateselect" id="dateselect" aria-label="開催日"></select>
-      <button class="datenav" id="nextDay" type="button" aria-label="次の開催日">›</button>
+    <div class="listbar">
+      <div class="tabs" id="tabs" role="tablist" aria-label="開催会場"></div>
+      <div class="datebar" id="datebar" hidden>
+        <button class="datenav" id="prevDay" type="button" aria-label="前の開催日">‹</button>
+        <select class="dateselect" id="dateselect" aria-label="開催日"></select>
+        <button class="datenav" id="nextDay" type="button" aria-label="次の開催日">›</button>
+      </div>
     </div>
-    <div class="tabs" id="tabs" role="tablist" aria-label="開催会場"></div>
     <div class="races" id="races" role="tabpanel"></div>
     <footer class="site-foot">
       <p>オッズは取得時点の参考値です。的中・正確性を保証するものではありません。</p>
@@ -382,11 +392,15 @@
         time.className = "race-time";
         time.textContent = r.post_time;
 
+        const dist = document.createElement("span");
+        dist.className = "race-dist";
+        dist.textContent = r.surface ? `${r.surface}${r.distance}` : "";
+
         const heads = document.createElement("span");
         heads.className = "race-heads";
         heads.textContent = `${r.n_horses}頭`;
 
-        a.append(no, name, chipCell, time, heads);
+        a.append(no, name, chipCell, time, dist, heads);
         panel.appendChild(a);
       }
     }
