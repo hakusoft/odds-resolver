@@ -1,17 +1,22 @@
-"""毎分フェッチャ: 締切駆動の段階制で1レースのオッズを取る（Issue #18）。
+"""毎分フェッチャ: チェックポイント（スロット）駆動で1レースのオッズを取る。
 
 EventBridge が毎分起動。1 起動で最大 1 リクエスト（Crawl-Delay 60 を
-構造で保証）。DynamoDB の当日レース表を読み、発走時刻と現在時刻・前回
-取得時刻から最も切迫したレースを 1 つ選んで取得し、RACE#{race_id} に
-TS#{HH:MM} で append する。
+構造で保証）。全レース共通のスロット表（発走までの残り分 T− で定義）を
+基準に「次のスロットを最も過ぎているレース」を選んで取得し、
+RACE#{race_id} に TS#{HH:MM} + slot ラベルで append する（Issue #47）。
 
-段階制（発走 T までの残り分 → 望ましい取得間隔）:
-  T-45〜T-20 : 15 分毎
-  T-20〜T-10 :  5 分毎
-  T-10〜T    :  2 分毎
-  T〜T+3     :  1 回だけ（確定オッズ）
-  それ以外   : 対象外
-数字は仮置き。実測（#23）で調整する。
+スロット表（T− 分, 許容窓 = 次スロットまでの間隔）:
+  ベースライン : T-480 〜 T-60 の毎時（8:00 JST 以降のみ試行）
+  勝負どころ   : T-45, T-30, T-20, T-15, T-10, T-8, T-6, T-4, T-2
+  確定         : 発走直後に 1 回（slot "F"）
+
+選択の優先順位は 確定 > 勝負どころ > ベースライン の段階制。同段では
+「スロット超過 ÷ 許容窓」の比率が最大のレースを選ぶ。取得できなかった
+スロットは埋め戻さない（明示的な欠測として残す）。発売前の空振りは
+DAY 器の last_attempt に記録し 30 分のクールダウンを置く。
+
+スロットの消化状況は DAY 器の closed_slots で追跡する。読みは毎分
+1 クエリ（DAY 全件）だけで済み、レースごとの履歴クエリを持たない。
 """
 import os
 import time
@@ -28,6 +33,17 @@ _TABLE = boto3.resource("dynamodb").Table(os.environ["TABLE_NAME"])
 # 移送前の生存期間。夜間バッチで S3 へ焼いた後も翌々日まで残す
 _TTL_DAYS = 2
 
+# (発走までの残り分, 許容窓[分])。昇順。数字は仮置きで実測 #23 で調整する
+_SLOTS = [
+    (2, 2), (4, 2), (6, 2), (8, 2), (10, 2),
+    (15, 5), (20, 5), (30, 10), (45, 15),
+    (60, 60), (120, 60), (180, 60), (240, 60),
+    (300, 60), (360, 60), (420, 60), (480, 60),
+]
+_BASELINE_MIN = 60          # これ以遠のスロットはベースライン層
+_BASELINE_START_HOUR = 8    # JST。発売開始前の空振り連打を避ける仮置き
+_ATTEMPT_COOLDOWN_SEC = 30 * 60
+
 
 def _now():
     return time.time()
@@ -42,6 +58,10 @@ def jst_today(ts: float) -> str:
     return time.strftime("%Y%m%d", time.gmtime(ts + 9 * 3600))
 
 
+def jst_hour(ts: float) -> int:
+    return time.gmtime(ts + 9 * 3600).tm_hour
+
+
 def _post_epoch(date: str, post_time: str) -> float:
     """YYYYMMDD と HH:MM（JST）を UTC epoch に。calendar.timegm は UTC 基準
     なので、JST の時刻から 9 時間引いて渡す。"""
@@ -51,32 +71,28 @@ def _post_epoch(date: str, post_time: str) -> float:
     return calendar.timegm((y, mo, d, h - 9, m, 0, 0, 0, 0))
 
 
-def _desired_interval_sec(minutes_to_post: float) -> float | None:
-    """発走までの残り分 → 望ましい取得間隔（秒）。対象外なら None。"""
-    if 20 <= minutes_to_post <= 45:
-        return 15 * 60
-    if 10 <= minutes_to_post < 20:
-        return 5 * 60
-    if 0 <= minutes_to_post < 10:
-        return 2 * 60
-    if -3 <= minutes_to_post < 0:
-        return None  # 発走後は下の確定取得で扱う
-    return None
+def _slot_label(minutes: int) -> str:
+    return f"T-{minutes}"
+
+
+def _actionable_slot(minutes_to_post: float, closed: set) -> tuple[int, int] | None:
+    """いま試行対象のスロット (T−分, 許容窓) を返す。
+
+    「期限が来ている中で最も発走に近いスロット」= T−分が最小のもの。
+    消化済み（closed_slots）ならこのレースに今やることは無い。
+    """
+    for s, spacing in _SLOTS:
+        if s >= minutes_to_post:
+            if _slot_label(s) in closed:
+                return None
+            return s, spacing
+    return None  # 最遠スロットよりまだ手前
 
 
 def _races_today(date: str) -> list[dict]:
-    items = _TABLE.query(
+    return _TABLE.query(
         KeyConditionExpression=Key("pk").eq(f"DAY#{date}")
     ).get("Items", [])
-    return items
-
-
-def _last_snapshot_ts(race_id: str) -> float | None:
-    items = _TABLE.query(
-        KeyConditionExpression=Key("pk").eq(f"RACE#{race_id}"),
-        ScanIndexForward=False, Limit=1,
-    ).get("Items", [])
-    return float(items[0]["fetched_at"]) if items else None
 
 
 def _has_final(race_id: str) -> bool:
@@ -87,41 +103,49 @@ def _has_final(race_id: str) -> bool:
     return bool(items and items[0].get("final"))
 
 
-def _pick(now: float, races: list[dict]) -> tuple[dict, bool] | None:
-    """取得すべき 1 レースと「確定取得か」を返す。無ければ None。
+def _pick(now: float, races: list[dict]) -> tuple[dict, int | None, bool] | None:
+    """取得すべき (レース, スロットT−分, 確定取得か) を返す。無ければ None。
 
-    切迫度 = 望ましい間隔をどれだけ超過したか。最大のものを選ぶ。
-    発走直後（T〜T+3）で未確定のレースは最優先で確定を取る。
+    優先順位: 確定 > 勝負どころ > ベースライン。
+    同段内は「スロット超過 ÷ 許容窓」の比率最大（同点は発走が近い方）。
+    ベースラインは 8:00 JST 以降のみ・空振り後 30 分は再試行しない。
     """
-    best = None  # (score, race, is_final)
+    near = base = None  # (score, race, slot)
     for r in races:
-        date = r["race_id"][:8]
         try:
-            post = _post_epoch(date, r["post_time"])
+            post = _post_epoch(r["race_id"][:8], r["post_time"])
         except Exception:
             continue
         minutes = (post - now) / 60.0
 
-        # 発走直後の確定取得（1 回だけ）
+        # 発走直後の確定取得（1 回だけ・最優先）
         if -3 <= minutes < 0 and not _has_final(r["race_id"]):
-            return r, True
+            return r, None, True
+        if minutes < 0:
+            continue
 
-        interval = _desired_interval_sec(minutes)
-        if interval is None:
+        closed = set(r.get("closed_slots") or [])
+        slot = _actionable_slot(minutes, closed)
+        if slot is None:
             continue
-        last = _last_snapshot_ts(r["race_id"])
-        elapsed = (now - last) if last else 1e9
-        if elapsed < interval:
-            continue
-        score = elapsed - interval  # 超過が大きいほど切迫
-        # 締切が近いほど僅かに優先（同点時の tie-break）
-        score += max(0, (45 - minutes)) * 0.1
-        if best is None or score > best[0]:
-            best = (score, r, False)
-    if best is None:
+        s, spacing = slot
+        score = (s - minutes) / spacing  # スロット超過の比率
+        score += max(0.0, (480 - minutes)) * 1e-6  # 同点時は発走が近い方
+        if s >= _BASELINE_MIN:
+            if jst_hour(now) < _BASELINE_START_HOUR:
+                continue
+            last = r.get("last_attempt")
+            if last is not None and now - float(last) < _ATTEMPT_COOLDOWN_SEC:
+                continue
+            if base is None or score > base[0]:
+                base = (score, r, s)
+        else:
+            if near is None or score > near[0]:
+                near = (score, r, s)
+    hit = near or base
+    if hit is None:
         return None
-    return best[1], best[2]
-
+    return hit[1], hit[2], False
 
 
 def run(now: float | None = None) -> dict:
@@ -134,7 +158,7 @@ def run(now: float | None = None) -> dict:
     picked = _pick(now, races)
     if picked is None:
         return {"date": date, "picked": None}
-    race, is_final = picked
+    race, slot, is_final = picked
 
     key = race.get("source_key")
     if not key:
@@ -143,38 +167,31 @@ def run(now: float | None = None) -> dict:
     html = source.fetch(source.odds_path(key))
     parsed = parse_odds(html)
     if parsed is None:
-        return {"date": date, "picked": race["race_id"], "note": "parse failed"}
+        # 発売前の空振り。ベースライン層のみクールダウンを記録する
+        if slot is not None and slot >= _BASELINE_MIN:
+            _record_attempt(race, now)
+        return {"date": date, "picked": race["race_id"],
+                "slot": _slot_label(slot) if slot is not None else "F",
+                "note": "parse failed"}
 
-    _append_snapshot(race["race_id"], now, parsed, is_final)
-    _precompute_day_metrics(race, parsed)
+    minutes = (_post_epoch(race["race_id"][:8], race["post_time"]) - now) / 60.0
+    label = "F" if is_final else _slot_label(slot)
+    _append_snapshot(race["race_id"], now, parsed, is_final, label)
+    _update_day_after_snapshot(race, parsed, minutes)
     return {"date": date, "picked": race["race_id"],
-            "time": jst_hm(now), "final": is_final,
+            "time": jst_hm(now), "slot": label, "final": is_final,
             "horses": len(parsed["horses"])}
 
 
-def _precompute_day_metrics(race: dict, parsed: dict):
-    """DAY 側の器に top1/ent を焼き込む（Issue #48）。
-
-    index API がレースごとに最新スナップショットを引き直す N+1 を無くす。
-    器は query で取った全属性を持っているので put_item の全置換で済み、
-    UpdateItem 権限を増やさない。
-    """
-    from decimal import Decimal
-    m = support_metrics(parsed["odds"])
-    if m is None:
-        return
-    race["top1"] = Decimal(str(m[0]))
-    race["ent"] = Decimal(str(m[1]))
-    _TABLE.put_item(Item=race)
-
-
-def _append_snapshot(race_id: str, now: float, parsed: dict, is_final: bool):
+def _append_snapshot(race_id: str, now: float, parsed: dict,
+                     is_final: bool, slot_label: str):
     from decimal import Decimal
     expires_at = int(now) + _TTL_DAYS * 24 * 3600
     item = {
         "pk": f"RACE#{race_id}",
         "sk": f"TS#{jst_hm(now)}",
         "time": jst_hm(now),
+        "slot": slot_label,
         "fetched_at": Decimal(str(int(now))),
         "horses": parsed["horses"],
         "odds": [Decimal(str(o)) if o is not None else None for o in parsed["odds"]],
@@ -183,6 +200,32 @@ def _append_snapshot(race_id: str, now: float, parsed: dict, is_final: bool):
     if is_final:
         item["final"] = True
     _TABLE.put_item(Item=item)
+
+
+def _update_day_after_snapshot(race: dict, parsed: dict, minutes_to_post: float):
+    """DAY 器へ top1/ent の前計算（#48）と消化スロットを書き戻す。
+
+    期限が来ていたスロットは取得の成否に関わらず全て閉じる。取り逃した
+    スロットは「閉じているのに対応する snapshot が無い」= 明示的な欠測
+    として分析側から見える。器は query 済みの全属性を持っているので
+    put_item の全置換で済み、UpdateItem 権限を増やさない。
+    """
+    from decimal import Decimal
+    m = support_metrics(parsed["odds"])
+    if m is not None:
+        race["top1"] = Decimal(str(m[0]))
+        race["ent"] = Decimal(str(m[1]))
+    closed = set(race.get("closed_slots") or [])
+    closed |= {_slot_label(s) for s, _ in _SLOTS if s >= minutes_to_post}
+    race["closed_slots"] = sorted(closed, key=lambda l: int(l[2:]))
+    race.pop("last_attempt", None)
+    _TABLE.put_item(Item=race)
+
+
+def _record_attempt(race: dict, now: float):
+    from decimal import Decimal
+    race["last_attempt"] = Decimal(str(int(now)))
+    _TABLE.put_item(Item=race)
 
 
 def handler(event, context):
