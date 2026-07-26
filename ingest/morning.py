@@ -46,17 +46,19 @@ def run(date: str | None = None) -> dict:
             continue
         for r in races:
             rid = make_race_id(date, v["venue"], r["race_no"])
-            _put_race(date, rid, v["venue"], r, expires_at)
+            source_key = v["key"][:-2] + f"{r['race_no']:02d}"
+            _put_race(date, rid, v["venue"], r, source_key, expires_at)
             n_races += 1
 
     return {"date": date, "venues": len(venues), "races": n_races}
 
 
-def _put_race(date, rid, venue, r, expires_at):
+def _put_race(date, rid, venue, r, source_key, expires_at):
     _TABLE.put_item(Item={
         "pk": f"DAY#{date}",
         "sk": f"RACE#{rid}",
         "race_id": rid,
+        "source_key": source_key,
         "venue": venue,
         "race_no": r["race_no"],
         "post_time": r["post_time"],
