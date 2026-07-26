@@ -84,11 +84,13 @@ def test_baseline_fills_idle(monkeypatch):
     assert slot == 300  # 250 分前 → T-300 スロット
 
 
-def test_baseline_gated_before_8am(monkeypatch):
+def test_baseline_gated_before_sales_open(monkeypatch):
     f = _mod(monkeypatch)
-    now = f._post_epoch("20260726", "7:30")  # JST 7:30
-    races = [{"race_id": "20260726-ko-01", "post_time": "14:00", "source_key": "k"}]
+    races = [{"race_id": "20260726-ko-01", "post_time": "16:00", "source_key": "k"}]
+    now = f._post_epoch("20260726", "9:30")  # JST 9:30 = 発売開始前
     assert f._pick(now, races) is None
+    now = f._post_epoch("20260726", "10:00")  # 発売開始と同時に解禁
+    assert f._pick(now, races) is not None
 
 
 def test_baseline_cooldown_after_failed_attempt(monkeypatch):
