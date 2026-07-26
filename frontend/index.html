@@ -595,13 +595,31 @@
       sec.hidden = false;
     }
 
+    async function fetchRace(raceId) {
+      const now = nowTime();
+      const pad = n => String(n).padStart(2, "0");
+      const todayStr = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
+      const s3Url = `data/races/${encodeURIComponent(raceId)}.json`;
+      const apiUrl = `api/?id=${encodeURIComponent(raceId)}`;
+      const urls = raceId.slice(0, 8) === todayStr ? [apiUrl, s3Url] : [s3Url, apiUrl];
+      for (const url of urls) {
+        try {
+          const res = await fetch(url);
+          if (!res.ok) continue;
+          const ct = res.headers.get("content-type") || "";
+          if (!ct.includes("json")) continue;
+          return await res.json();
+        } catch {}
+      }
+      return null;
+    }
+
     async function fillNextViz(raceId) {
       const el = document.getElementById("nextviz");
       el.innerHTML = "";
       try {
-        const res = await fetch(`data/races/${encodeURIComponent(raceId)}.json`);
-        if (!res.ok) return;
-        const race = await res.json();
+        const race = await fetchRace(raceId);
+        if (!race || !race.snapshots.length) return;
         const odds = race.snapshots[race.snapshots.length - 1].odds;
         const inv = odds.map(o => (o ? 1 / o : 0));
         const sum = inv.reduce((a, b) => a + b, 0);
@@ -688,9 +706,8 @@
 
     async function fillHeroBar(bar, raceId) {
       try {
-        const res = await fetch(`data/races/${encodeURIComponent(raceId)}.json`);
-        if (!res.ok) return;
-        const race = await res.json();
+        const race = await fetchRace(raceId);
+        if (!race || !race.snapshots.length) return;
         const odds = race.snapshots[race.snapshots.length - 1].odds;
         const inv = odds.map(o => (o ? 1 / o : 0));
         const s = inv.reduce((a, b) => a + b, 0);
@@ -773,7 +790,6 @@
       const res = await fetch("data/days.json");
       if (!res.ok) throw new Error(`日付目次の取得に失敗 (${res.status})`);
       days = (await res.json()).days || [];
-      if (days.length === 0) throw new Error("開催日がありません");
 
       const sel = document.getElementById("dateselect");
       for (const d of days) {
@@ -803,6 +819,7 @@
           }
         } catch {}
       }
+      if (days.length === 0) throw new Error("開催日がありません");
 
       const { date, venue } = parseHash();
       const initialDate = days.some(d => d.date === date) ? date : days[0].date;
