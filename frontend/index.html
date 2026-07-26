@@ -787,9 +787,9 @@
     }
 
     async function main() {
-      const res = await fetch("data/days.json");
-      if (!res.ok) throw new Error(`日付目次の取得に失敗 (${res.status})`);
-      days = (await res.json()).days || [];
+      const res = await fetch("data/days.json").catch(() => null);
+      const ct = res?.headers.get("content-type") || "";
+      days = res?.ok && ct.includes("json") ? (await res.json()).days || [] : [];
 
       const sel = document.getElementById("dateselect");
       for (const d of days) {
