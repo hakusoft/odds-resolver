@@ -9,7 +9,7 @@
 
 > "resolve" = ごちゃついた数字を、意味のある視覚像に解きほぐす。
 
-## アーキテクチャ（稼働中 / AWS 無料枠）
+## アーキテクチャ
 
 ```mermaid
 flowchart TB
@@ -27,39 +27,26 @@ flowchart TB
   CF --> BR["ブラウザ（SVG 描画）"]
 ```
 
-詳細はそれぞれの持ち場に置く: リソース定義とジョブの時刻・順序は
+## 1 日の動き（JST）
+
+| 時刻 | 動くもの | すること |
+| --- | --- | --- |
+| 23:30 | archive | 当日の確定分を S3 へ焼く。日付が変わる**前**に昨日を確定させ、切替直後の空白を作らない |
+| 0:15 | morning | 当日のレース表の器を DynamoDB に作る（0:00 ちょうどは取得元の日次切替と重なるため外す） |
+| 毎分 | fetch | 器と発走時刻を見て、最も切迫した 1 レースだけ取得する |
+| 随時 | read-api | 当日データを返す。唯一のリクエスト駆動（CloudFront `/api/*` 経由） |
+
+## 取得の理屈
+
+- **Crawl-Delay 60 秒（取得元 robots.txt）が絶対制約**。毎分起動 × 1 起動 1 リクエスト
+  という構造で守る。
+- 発走が近いレースほど短い間隔で取る:
+  **T-45〜20 分: 15 分毎 / T-20〜10: 5 分毎 / T-10〜発走: 2 分毎 / 発走直後: 確定 1 回**。
+- 毎分の選択は「望ましい間隔をどれだけ超過しているか」= 切迫度が最大の 1 レース。
+  対象がなければ何もしない。数字は仮置きで、実測調整は #23。
+
+---
+
+詳細の持ち場: リソース定義と運用は
 [hakusoft-infra/odds-resolver](https://github.com/hakusoft/hakusoft-infra/tree/main/odds-resolver)、
-取得まわりの制約（Crawl-Delay 60・段階制）は `ingest/README.md`、
-レース ID 体系は `docs/race-id.md`。
-
-## データ配置と配信
-
-| パス | 内容 | キャッシュ |
-| --- | --- | --- |
-| `data/days.json` | 開催日の目次（夜間バッチが管理） | 60 秒 |
-| `data/{YYYYMMDD}/index.json` | 日別一覧 + 事前計算指標（top1 / ent） | 1 時間 |
-| `data/races/{race_id}.json` | レース詳細（馬・全スナップショット） | 24 時間 |
-| `api/?date=` `api/?id=` | 当日の同スキーマ JSON（DynamoDB 直読み） | 60 秒 |
-
-フロントは「当日 = api/ 優先・過去 = data/ 優先」のフォールバックで読む。
-
-## デプロイ（すべて main マージで自動）
-
-| 経路 | 対象 | 備考 |
-| --- | --- | --- |
-| deploy.yml | `frontend/` → S3 + CloudFront 無効化 | `data/` 配下には一切触れない（夜間バッチの領分） |
-| deploy-ingest.yml | `ingest/` → Lambda 4 関数 | テスト → zip 化 → update-function-code。OIDC ロールは frontend 用と分離 |
-| hakusoft-infra | Terraform（器・IAM・EventBridge） | 手元 apply。Lambda のコードは ignore_changes で CI の領分 |
-
-## 主要な設計判断とその理由
-
-| 判断 | 理由 |
-| --- | --- |
-| ユーザー提示は 1 分毎 | WebSocket / 常時接続が不要になり、無料枠に素直に収まる |
-| 取得は毎分 1 判断 + 段階制 | EventBridge 最短 1 分と Crawl-Delay 60 が噛み合う。切迫度で 1 レースを選ぶ |
-| 過去は静的ファイルに焼く | append-only。落ちるサーバーが無く、CDN が何万アクセスでも捌く |
-| アーカイブは RDS ではなく S3 | 「たまに分析」に常駐 RDBMS は過剰。必要になれば使った分だけの Athena 等を後付けできる |
-| 探索用 raw/ は作らない | append-only ゆえ view から後追い生成できる。需要が出るまで夜間バッチを軽く保つ |
-| 描画はブラウザ、Lambda は数字まで | サーバーで絵を作らない。見た目の変更をフロントの JS デプロイだけで完結させる |
-| archive は read-api の整形を共用 | 当日 / 過去のスキーマ乖離をコードの構造で防ぐ |
-| 取得は VPC 外 Lambda（送信元 IP 可変） | IP 単位のブロック / レート制限を自然に回避し、NAT Gateway の固定費を避ける |
+取得実装と出力データの配置は `ingest/README.md`、レース ID 体系は `docs/race-id.md`。

@@ -24,6 +24,18 @@
   数字は仮置きで、実測調整は #23。
 - 取得元の詳細（サイト名・URL・DOM 依存）は公開物に書かず、このディレクトリ内に閉じる。
 
+## 出力データの配置
+
+archive が焼く view と read-api は同一スキーマ（archive が api の整形関数を共用）。
+フロントは「当日 = api/ 優先・過去 = data/ 優先」のフォールバックで読む。
+
+| パス | 内容 | キャッシュ |
+| --- | --- | --- |
+| `data/days.json` | 開催日の目次（archive が管理） | 60 秒 |
+| `data/{YYYYMMDD}/index.json` | 日別一覧 + 事前計算指標（top1 / ent） | 1 時間 |
+| `data/races/{race_id}.json` | レース詳細（馬・全スナップショット） | 24 時間 |
+| `api/?date=` `api/?id=` | 当日の同スキーマ JSON（DynamoDB 直読み） | 60 秒 |
+
 ## テスト
 
 パーサはネットワーク非依存。`tests/` の固定 HTML で検証する。
