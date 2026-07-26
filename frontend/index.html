@@ -705,11 +705,20 @@
       } catch {  }
     }
 
+    async function fetchDayIndex(day) {
+      const dir = day.date.replaceAll("-", "");
+      const url = day.src === "api" ? `api/?date=${dir}` : `data/${dir}/index.json`;
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      const ct = res.headers.get("content-type") || "";
+      if (!ct.includes("json")) return null;
+      return res.json();
+    }
+
     async function selectDate(date, wantVenue) {
-      const dir = date.replaceAll("-", ""); // "2026-07-24" -> "20260724"
-      const res = await fetch(`data/${dir}/index.json`);
-      if (!res.ok) throw new Error(`${date} の目次取得に失敗 (${res.status})`);
-      const idx = await res.json();
+      const day = days.find(d => d.date === date);
+      const idx = day ? await fetchDayIndex(day) : null;
+      if (!idx) throw new Error(`${date} の目次取得に失敗`);
       currentDate = date;
 
       document.getElementById("dateselect").value = date;
@@ -777,14 +786,36 @@
       document.getElementById("prevDay").addEventListener("click", () => stepDay(+1));
       document.getElementById("nextDay").addEventListener("click", () => stepDay(-1));
 
+      const now = nowTime();
+      const pad = n => String(n).padStart(2, "0");
+      const todayStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+      if (!days.some(d => d.date === todayStr)) {
+        try {
+          const idx = await fetchDayIndex({ date: todayStr, src: "api" });
+          if (idx && idx.races.length) {
+            const vs = [...new Set(idx.races.map(r => r.venue))];
+            days.unshift({ date: todayStr, venues: vs, n_venues: vs.length,
+                           n_races: idx.races.length, src: "api" });
+            const opt = document.createElement("option");
+            opt.value = todayStr;
+            opt.textContent = `${todayStr}（${vs.length}会場・${idx.races.length}R）`;
+            sel.insertBefore(opt, sel.firstChild);
+          }
+        } catch {}
+      }
+
       const { date, venue } = parseHash();
       const initialDate = days.some(d => d.date === date) ? date : days[0].date;
 
-      const latestDir = days[0].date.replaceAll("-", "");
-      fetch(`data/${latestDir}/index.json`)
-        .then(r => (r.ok ? r.json() : null))
-        .then(idx => { if (idx) { renderNext(idx); renderHero(idx); } })
-        .catch(() => {});
+      (async () => {
+        for (let i = 0; i < days.length; i++) {
+          const idx = await fetchDayIndex(days[i]).catch(() => null);
+          if (!idx) continue;
+          if (i === 0) renderNext(idx);
+          if (idx.races.some(r => r.top1 != null)) { renderHero(idx); break; }
+          if (i >= 3) break;
+        }
+      })();
 
       document.getElementById("status").hidden = true;
       document.getElementById("datebar").hidden = false;
