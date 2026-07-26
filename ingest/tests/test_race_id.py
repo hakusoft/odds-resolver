@@ -15,4 +15,5 @@ def test_make_race_id():
 def test_venue_from_key():
     assert venue_from_key("202607242015060500") == "大井"
     assert venue_from_key("202607233601080300") == "門別"
+    assert venue_from_key("202607250304080400") == "帯広ば"  # 場コード 03
     assert venue_from_key("202607249915060500") is None  # 未知コード
