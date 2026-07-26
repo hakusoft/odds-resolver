@@ -220,19 +220,46 @@
 
     async function main() {
 
-      const id = new URLSearchParams(location.search).get("id");
+      const params = new URLSearchParams(location.search);
+      const id = params.get("id");
       if (!id || !/^\d{8}-[a-z]{2}-\d{2}$/.test(id)) {
         throw new Error("レース ID が指定されていない（?id=... が必要）");
       }
-      const res = await fetch(`data/races/${id}.json`);
-      if (!res.ok) throw new Error(`レースデータが見つからない (${res.status})`);
-      const race = await res.json();
+
+      const qnow = params.get("now");
+      const now = qnow ? new Date(qnow) : new Date();
+      const pad = n => String(n).padStart(2, "0");
+      const todayStr = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
+      const s3Url = `data/races/${id}.json`;
+      const apiUrl = `api/?id=${encodeURIComponent(id)}`;
+      const urls = id.slice(0, 8) === todayStr ? [apiUrl, s3Url] : [s3Url, apiUrl];
+
+      let race = null;
+      for (const u of urls) {
+        try {
+          const res = await fetch(u);
+          if (!res.ok) continue;
+          const ct = res.headers.get("content-type") || "";
+          if (!ct.includes("json")) continue;
+          race = await res.json();
+          break;
+        } catch {}
+      }
+      if (!race) throw new Error("レースデータが見つからない");
 
       document.getElementById("race-meta").textContent =
         `${race.venue} ${race.race_no}R ${race.name}` +
         (race.surface ? ` ${race.surface}${race.distance}m` : "") +
         ` / 発走 ${race.post_time}`;
       document.title = `OddsResolver — ${race.name}`;
+
+      if (!race.snapshots.length) {
+        document.querySelector(".chart-sub").textContent =
+          "オッズはまだ取得されていません（発売前・取得待ち）。";
+        document.querySelector(".legend").hidden = true;
+        document.querySelector("details").hidden = true;
+        return;
+      }
 
       const support = race.snapshots.map(s => {
         const inv = s.odds.map(o => 1 / o);
