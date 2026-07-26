@@ -116,3 +116,44 @@ def _parse_row(cells: list[str], col: dict) -> dict | None:
         "race_no": rno, "post_time": post, "name": name,
         "n_horses": n_horses, "surface": surface, "distance": distance,
     }
+
+
+def parse_odds(html: str) -> dict | None:
+    """オッズページから馬(num,name)と単勝オッズを返す。
+    {horses:[{num,name}], odds:[float|None]}。想定外の構造なら None。
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    table = None
+    for t in soup.find_all("table", class_="dataTable"):
+        head = [c.get_text(strip=True) for c in t.find_all("tr")[0].find_all(["th", "td"])]
+        if "馬番" in head and "単勝オッズ" in head:
+            table = t
+            col = {h.replace(" ", ""): i for i, h in enumerate(head)}
+            break
+    if not table:
+        return None
+
+    i_num = col.get("馬番")
+    i_name = col.get("馬名")
+    i_odds = col.get("単勝オッズ")
+    if i_num is None or i_name is None or i_odds is None:
+        return None
+
+    horses, odds = [], []
+    for tr in table.find_all("tr")[1:]:
+        cells = [c.get_text(strip=True) for c in tr.find_all(["td", "th"])]
+        if len(cells) <= max(i_num, i_name, i_odds):
+            continue
+        m = re.match(r"^\d+$", cells[i_num])
+        if not m:
+            continue
+        horses.append({"num": int(cells[i_num]), "name": cells[i_name]})
+        mo = re.match(r"^([\d.]+)$", cells[i_odds])
+        odds.append(float(mo.group(1)) if mo else None)
+    if not horses:
+        return None
+    order = sorted(range(len(horses)), key=lambda k: horses[k]["num"])
+    return {
+        "horses": [horses[k] for k in order],
+        "odds": [odds[k] for k in order],
+    }
