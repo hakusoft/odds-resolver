@@ -69,7 +69,7 @@ def test_index_falls_back_when_not_precomputed(monkeypatch):
     assert "RACE#20260726-mo-01" in calls
 
 
-def test_fetch_writes_metrics_to_day_item(monkeypatch):
+def test_fetch_closes_slots_even_when_metrics_unavailable(monkeypatch):
     monkeypatch.setenv("TABLE_NAME", "dummy")
     import importlib
     from ingest import fetch
@@ -84,27 +84,8 @@ def test_fetch_writes_metrics_to_day_item(monkeypatch):
     monkeypatch.setattr(fetch, "_TABLE", FakeTable())
     race = {"pk": "DAY#20260726", "sk": "RACE#20260726-mo-01",
             "race_id": "20260726-mo-01", "post_time": "12:25"}
-    fetch._precompute_day_metrics(race, {"odds": [2.0, 4.0, 8.0, 8.0],
-                                         "horses": []})
+    fetch._update_day_after_snapshot(race, {"odds": [None, None], "horses": []}, 8.0)
+    # 指標は付かないが、消化スロットの記録は行われる
     assert len(written) == 1
-    assert written[0]["top1"] == Decimal("0.5")
-    assert 0 < float(written[0]["ent"]) < 1
-    assert written[0]["pk"] == "DAY#20260726"
-
-
-def test_fetch_skips_metrics_when_unavailable(monkeypatch):
-    monkeypatch.setenv("TABLE_NAME", "dummy")
-    import importlib
-    from ingest import fetch
-    importlib.reload(fetch)
-
-    written = []
-
-    class FakeTable:
-        def put_item(self, Item):
-            written.append(Item)
-
-    monkeypatch.setattr(fetch, "_TABLE", FakeTable())
-    fetch._precompute_day_metrics({"pk": "p", "sk": "s"},
-                                  {"odds": [None, None], "horses": []})
-    assert written == []
+    assert "top1" not in written[0]
+    assert "T-8" in written[0]["closed_slots"]
