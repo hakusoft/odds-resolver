@@ -1,0 +1,110 @@
+"""指標の書き込み時前計算（Issue #48。ネットワーク/AWS 非依存）。"""
+import pathlib
+import sys
+from decimal import Decimal
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
+
+from ingest.metrics import support_metrics  # noqa: E402
+
+
+def test_support_metrics_basic():
+    top1, ent = support_metrics([2.0, 4.0, 8.0, 8.0])
+    assert abs(top1 - 0.5) < 1e-6
+    assert 0 < ent < 1
+
+
+def test_support_metrics_unavailable():
+    assert support_metrics([None, None]) is None
+    assert support_metrics([]) is None
+
+
+def _api(monkeypatch):
+    monkeypatch.setenv("TABLE_NAME", "dummy")
+    import importlib
+    from ingest import api
+    importlib.reload(api)
+    return api
+
+
+def test_index_uses_precomputed_without_race_query(monkeypatch):
+    api = _api(monkeypatch)
+    calls = []
+
+    def fake_query(pk, limit=None, desc=False):
+        calls.append(pk)
+        return [{
+            "pk": "DAY#20260726", "sk": "RACE#20260726-mo-01",
+            "race_id": "20260726-mo-01", "venue": "盛岡", "race_no": Decimal(1),
+            "post_time": "12:25", "name": "x", "n_horses": Decimal(8),
+            "surface": "ダ", "distance": Decimal(1200),
+            "top1": Decimal("0.5"), "ent": Decimal("0.81"),
+        }]
+
+    monkeypatch.setattr(api, "_query", fake_query)
+    idx = api._index("20260726")
+    assert idx["races"][0]["top1"] == 0.5
+    assert idx["races"][0]["ent"] == 0.81
+    assert calls == ["DAY#20260726"]  # RACE# への追加クエリが無い
+
+
+def test_index_falls_back_when_not_precomputed(monkeypatch):
+    api = _api(monkeypatch)
+    calls = []
+
+    def fake_query(pk, limit=None, desc=False):
+        calls.append(pk)
+        if pk.startswith("DAY#"):
+            return [{
+                "pk": "DAY#20260726", "sk": "RACE#20260726-mo-01",
+                "race_id": "20260726-mo-01", "venue": "盛岡",
+                "race_no": Decimal(1), "post_time": "12:25", "name": "x",
+                "n_horses": Decimal(2), "surface": "ダ", "distance": Decimal(1200),
+            }]
+        return [{"odds": [Decimal("2.0"), Decimal("2.0")]}]
+
+    monkeypatch.setattr(api, "_query", fake_query)
+    idx = api._index("20260726")
+    assert idx["races"][0]["top1"] == 0.5
+    assert "RACE#20260726-mo-01" in calls
+
+
+def test_fetch_writes_metrics_to_day_item(monkeypatch):
+    monkeypatch.setenv("TABLE_NAME", "dummy")
+    import importlib
+    from ingest import fetch
+    importlib.reload(fetch)
+
+    written = []
+
+    class FakeTable:
+        def put_item(self, Item):
+            written.append(Item)
+
+    monkeypatch.setattr(fetch, "_TABLE", FakeTable())
+    race = {"pk": "DAY#20260726", "sk": "RACE#20260726-mo-01",
+            "race_id": "20260726-mo-01", "post_time": "12:25"}
+    fetch._precompute_day_metrics(race, {"odds": [2.0, 4.0, 8.0, 8.0],
+                                         "horses": []})
+    assert len(written) == 1
+    assert written[0]["top1"] == Decimal("0.5")
+    assert 0 < float(written[0]["ent"]) < 1
+    assert written[0]["pk"] == "DAY#20260726"
+
+
+def test_fetch_skips_metrics_when_unavailable(monkeypatch):
+    monkeypatch.setenv("TABLE_NAME", "dummy")
+    import importlib
+    from ingest import fetch
+    importlib.reload(fetch)
+
+    written = []
+
+    class FakeTable:
+        def put_item(self, Item):
+            written.append(Item)
+
+    monkeypatch.setattr(fetch, "_TABLE", FakeTable())
+    fetch._precompute_day_metrics({"pk": "p", "sk": "s"},
+                                  {"odds": [None, None], "horses": []})
+    assert written == []

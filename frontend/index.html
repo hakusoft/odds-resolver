@@ -722,14 +722,23 @@
       } catch {  }
     }
 
-    async function fetchDayIndex(day) {
-      const dir = day.date.replaceAll("-", "");
-      const url = day.src === "api" ? `api/?date=${dir}` : `data/${dir}/index.json`;
-      const res = await fetch(url);
-      if (!res.ok) return null;
-      const ct = res.headers.get("content-type") || "";
-      if (!ct.includes("json")) return null;
-      return res.json();
+    const dayIndexCache = new Map();
+    function fetchDayIndex(day) {
+      const hit = dayIndexCache.get(day.date);
+      if (hit && Date.now() - hit.at < 60000) return hit.promise;
+      const promise = (async () => {
+        const dir = day.date.replaceAll("-", "");
+        const url = day.src === "api" ? `api/?date=${dir}` : `data/${dir}/index.json`;
+        const res = await fetch(url);
+        if (!res.ok) return null;
+        const ct = res.headers.get("content-type") || "";
+        if (!ct.includes("json")) return null;
+        return res.json();
+      })();
+      dayIndexCache.set(day.date, { at: Date.now(), promise });
+      promise.then(v => { if (v === null) dayIndexCache.delete(day.date); },
+                   () => dayIndexCache.delete(day.date));
+      return promise;
     }
 
     async function selectDate(date, wantVenue) {

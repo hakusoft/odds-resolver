@@ -10,11 +10,12 @@ DynamoDB のホットデータを、S3 の view JSON と同一スキーマで返
 オッズがまだ無い器の段階では snapshots は空・指標なし。
 """
 import json
-import math
 import os
 
 import boto3
 from boto3.dynamodb.conditions import Key
+
+from .metrics import support_metrics
 
 _table = None
 
@@ -60,9 +61,14 @@ def _index(date: str) -> dict:
             "surface": it.get("surface"),
             "distance": int(it["distance"]) if it.get("distance") is not None else None,
         }
-        metrics = _latest_metrics(it["race_id"])
-        if metrics:
-            r["top1"], r["ent"] = metrics
+        if it.get("top1") is not None:
+            # フェッチャが書き込み時に前計算した値（Issue #48）。追加クエリ不要
+            r["top1"], r["ent"] = float(it["top1"]), float(it["ent"])
+        else:
+            # 前計算導入前に書かれた器へのフォールバック（TTL 2 日で自然消滅）
+            metrics = _latest_metrics(it["race_id"])
+            if metrics:
+                r["top1"], r["ent"] = metrics
         races.append(r)
     return {"date": f"{date[:4]}-{date[4:6]}-{date[6:]}", "races": races}
 
@@ -103,15 +109,7 @@ def _latest_metrics(rid: str):
     snaps = _query(f"RACE#{rid}", limit=1, desc=True)
     if not snaps:
         return None
-    odds = [float(o) if o is not None else None for o in snaps[0]["odds"]]
-    inv = [(1.0 / o if o else 0.0) for o in odds]
-    s = sum(inv)
-    if s <= 0:
-        return None
-    p = sorted((x / s for x in inv), reverse=True)
-    ent = -sum(x * math.log(x) for x in p if x > 0)
-    ent_norm = ent / math.log(len(p)) if len(p) > 1 else 0.0
-    return round(p[0], 3), round(ent_norm, 3)
+    return support_metrics(snaps[0]["odds"])
 
 
 def _query(pk: str, limit: int | None = None, desc: bool = False):

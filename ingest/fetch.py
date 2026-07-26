@@ -20,6 +20,7 @@ import boto3
 from boto3.dynamodb.conditions import Key
 
 from . import source
+from .metrics import support_metrics
 from .parse import parse_odds
 
 _TABLE = boto3.resource("dynamodb").Table(os.environ["TABLE_NAME"])
@@ -145,9 +146,26 @@ def run(now: float | None = None) -> dict:
         return {"date": date, "picked": race["race_id"], "note": "parse failed"}
 
     _append_snapshot(race["race_id"], now, parsed, is_final)
+    _precompute_day_metrics(race, parsed)
     return {"date": date, "picked": race["race_id"],
             "time": jst_hm(now), "final": is_final,
             "horses": len(parsed["horses"])}
+
+
+def _precompute_day_metrics(race: dict, parsed: dict):
+    """DAY 側の器に top1/ent を焼き込む（Issue #48）。
+
+    index API がレースごとに最新スナップショットを引き直す N+1 を無くす。
+    器は query で取った全属性を持っているので put_item の全置換で済み、
+    UpdateItem 権限を増やさない。
+    """
+    from decimal import Decimal
+    m = support_metrics(parsed["odds"])
+    if m is None:
+        return
+    race["top1"] = Decimal(str(m[0]))
+    race["ent"] = Decimal(str(m[1]))
+    _TABLE.put_item(Item=race)
 
 
 def _append_snapshot(race_id: str, now: float, parsed: dict, is_final: bool):
