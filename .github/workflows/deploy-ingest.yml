@@ -1,0 +1,85 @@
+# ingest/ のコードを Lambda 4 関数へデプロイする（#29）。
+#
+# hakusoft-infra は Lambda を ignore_changes = [filename, source_code_hash] で
+# 管理しており、コードを届けるのはこのワークフローの責務。handler・環境変数
+# などの設定変更は Terraform の領分（ロールにも UpdateFunctionCode しか無い）。
+#
+# PR では test ジョブだけが走る。deploy は main への push と手動起動のみ。
+
+name: deploy-ingest
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "ingest/**"
+      - ".github/workflows/deploy-ingest.yml"
+  pull_request:
+    paths:
+      - "ingest/**"
+      - ".github/workflows/deploy-ingest.yml"
+  workflow_dispatch: {}
+
+permissions:
+  id-token: write # OIDC トークンの取得に必要
+  contents: read
+
+concurrency:
+  group: deploy-ingest
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      # boto3 が import 時にリージョンを解決できず落ちるのを防ぐ。
+      # テストはネットワーク・AWS 非依存なので認証情報は不要
+      AWS_DEFAULT_REGION: ap-northeast-1
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13" # Lambda ランタイムに合わせる
+
+      - run: pip install -r ingest/requirements.txt pytest
+
+      - run: python -m pytest ingest/tests -q
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # 依存は beautifulsoup4 のみ zip に同梱する（boto3 はランタイム同梱）。
+      # tests は Lambda では不要なので落とす
+      - name: Build zip
+        run: |
+          mkdir -p build/pkg
+          cp -r ingest build/pkg/
+          rm -rf build/pkg/ingest/tests build/pkg/ingest/__pycache__
+          pip install beautifulsoup4 --target build/pkg
+          rm -rf build/pkg/*.dist-info build/pkg/__pycache__
+          cd build/pkg && zip -qr ../ingest.zip .
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::417441750247:role/odds-resolver-github-deploy-ingest
+          aws-region: ap-northeast-1
+
+      # archive は実装が載るまで placeholder handler のままだが、コードだけ
+      # 先に揃えても害はない（EventBridge ルールが DISABLED で呼ばれない）
+      - name: Deploy to Lambda
+        run: |
+          for fn in odds-resolver-morning odds-resolver-fetch odds-resolver-archive odds-resolver-read-api; do
+            aws lambda update-function-code \
+              --function-name "$fn" \
+              --zip-file fileb://build/ingest.zip \
+              --query "[FunctionName,CodeSha256]" --output text
+          done
