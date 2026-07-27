@@ -94,10 +94,38 @@ def _load_days() -> list[dict]:
         return []
 
 
+def _invalidate(date: str) -> str | None:
+    """再焼きで上書きした日の CloudFront キャッシュを無効化する（Issue #64）。
+
+    レース詳細は 24 時間キャッシュのため、上書き（着順の追記など）は
+    invalidation しないと最大 1 日見えない。ワイルドカード 1 パス扱い ×
+    2 パス/日で、無料枠 1,000 パス/月に対し余裕。
+    """
+    dist = os.environ.get("DISTRIBUTION_ID")
+    if not dist:
+        return None  # ローカル実行など。焼き自体は成立している
+    ref = f"rebake-{date}-{int(time.time())}"
+    boto3.client("cloudfront").create_invalidation(
+        DistributionId=dist,
+        InvalidationBatch={
+            "Paths": {"Quantity": 2,
+                      "Items": [f"/data/races/{date}-*",
+                                f"/data/{date}/index.json"]},
+            "CallerReference": ref,
+        })
+    return ref
+
+
 def handler(event, context):
     if isinstance(event, dict) and event.get("mode") == "yesterday":
         # 朝の窓で回収した前日の着順を view へ反映する再焼き（Issue #52）
-        return run(time.strftime("%Y%m%d",
-                                 time.gmtime(time.time() + 9 * 3600 - 24 * 3600)))
-    date = event.get("date") if isinstance(event, dict) else None
-    return run(date)
+        date = time.strftime("%Y%m%d",
+                             time.gmtime(time.time() + 9 * 3600 - 24 * 3600))
+    else:
+        date = event.get("date") if isinstance(event, dict) else None
+    out = run(date)
+    # 過去日の焼き直しのみ無効化する。当日の初回焼き（23:30）は上書きでは
+    # ないためキャッシュ汚染がなく、不要
+    if out.get("races") and date and date != jst_today():
+        out["invalidation"] = _invalidate(date)
+    return out

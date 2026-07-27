@@ -145,3 +145,43 @@ def test_cache_control_policy(monkeypatch):
         "public, max-age=3600"
     assert fake.objects[("data-bkt", "races/20260726-mo-01.json")]["cc"] == \
         "public, max-age=86400"
+
+
+def test_handler_invalidates_only_past_day_rebakes(monkeypatch):
+    import importlib
+    from ingest import archive
+    monkeypatch.setenv("TABLE_NAME", "dummy")
+    importlib.reload(archive)
+
+    calls = []
+    monkeypatch.setattr(archive, "_invalidate", lambda d: calls.append(d) or f"ref-{d}")
+    monkeypatch.setattr(archive, "run", lambda d=None: {"date": d or "TODAY", "races": 5})
+    monkeypatch.setattr(archive, "jst_today", lambda: "20260728")
+
+    # 過去日の再焼き → 無効化する
+    out = archive.handler({"date": "20260726"}, None)
+    assert out["invalidation"] == "ref-20260726" and calls == ["20260726"]
+
+    # 当日の焼き（date 指定なし）→ 無効化しない
+    calls.clear()
+    archive.handler({}, None)
+    assert calls == []
+
+    # 当日を date 指定で焼いた場合も無効化しない
+    archive.handler({"date": "20260728"}, None)
+    assert calls == []
+
+
+def test_handler_skips_invalidation_when_no_races(monkeypatch):
+    import importlib
+    from ingest import archive
+    monkeypatch.setenv("TABLE_NAME", "dummy")
+    importlib.reload(archive)
+
+    calls = []
+    monkeypatch.setattr(archive, "_invalidate", lambda d: calls.append(d))
+    monkeypatch.setattr(archive, "run",
+                        lambda d=None: {"date": d, "races": 0, "note": "no races"})
+    monkeypatch.setattr(archive, "jst_today", lambda: "20260728")
+    archive.handler({"date": "20260726"}, None)
+    assert calls == []  # 非開催日は無効化も不要
