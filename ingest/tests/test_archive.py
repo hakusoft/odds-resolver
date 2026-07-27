@@ -40,11 +40,13 @@ SNAPSHOTS = {
 }
 
 
-def _fake_query(pk, limit=None, desc=False):
+def _fake_query(pk, limit=None, desc=False, sk_prefix=None):
     if pk.startswith("DAY#"):
         items = [i for i in DAY_ITEMS if i["pk"] == pk]
     else:
         items = list(SNAPSHOTS.get(pk, []))
+    if sk_prefix:
+        items = [i for i in items if i["sk"].startswith(sk_prefix)]
     items.sort(key=lambda x: x["sk"], reverse=desc)
     return items[:limit] if limit else items
 

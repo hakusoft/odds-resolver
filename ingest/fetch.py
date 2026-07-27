@@ -98,8 +98,10 @@ def _races_today(date: str) -> list[dict]:
 
 
 def _has_final(race_id: str) -> bool:
+    # sk を TS# に絞る。RESULT 項目と同居しているため（#63）
     items = _TABLE.query(
-        KeyConditionExpression=Key("pk").eq(f"RACE#{race_id}"),
+        KeyConditionExpression=(
+            Key("pk").eq(f"RACE#{race_id}") & Key("sk").begins_with("TS#")),
         ScanIndexForward=False, Limit=1,
     ).get("Items", [])
     return bool(items and items[0].get("final"))

@@ -52,7 +52,7 @@ def test_index_falls_back_when_not_precomputed(monkeypatch):
     api = _api(monkeypatch)
     calls = []
 
-    def fake_query(pk, limit=None, desc=False):
+    def fake_query(pk, limit=None, desc=False, sk_prefix=None):
         calls.append(pk)
         if pk.startswith("DAY#"):
             return [{
@@ -61,7 +61,7 @@ def test_index_falls_back_when_not_precomputed(monkeypatch):
                 "race_no": Decimal(1), "post_time": "12:25", "name": "x",
                 "n_horses": Decimal(2), "surface": "ダ", "distance": Decimal(1200),
             }]
-        return [{"odds": [Decimal("2.0"), Decimal("2.0")]}]
+        return [{"sk": "TS#12:00", "odds": [Decimal("2.0"), Decimal("2.0")]}]
 
     monkeypatch.setattr(api, "_query", fake_query)
     idx = api._index("20260726")
