@@ -32,3 +32,7 @@ def race_list_path(key: str) -> str:
 
 def odds_path(key: str) -> str:
     return f"/odds/tanfuku/RACEID/{key}"
+
+
+def result_path(key: str) -> str:
+    return f"/race_performance/list/RACEID/{key}"

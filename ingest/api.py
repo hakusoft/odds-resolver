@@ -84,7 +84,9 @@ def _race(rid: str) -> dict:
     if meta is None:
         raise KeyError(rid)
 
-    snaps = _query(f"RACE#{rid}")
+    items = _query(f"RACE#{rid}")
+    result = next((i for i in items if i["sk"] == "RESULT"), None)
+    snaps = [i for i in items if i["sk"].startswith("TS#")]
     horses, snapshots = [], []
     if snaps:
         snaps.sort(key=lambda x: x["sk"])
@@ -96,13 +98,17 @@ def _race(rid: str) -> dict:
             "odds": [float(o) if o else None for o in s["odds"]],
         } for s in snaps]
 
-    return {
+    out = {
         "race_id": rid, "name": meta["name"], "venue": meta["venue"],
         "race_no": int(meta["race_no"]), "post_time": meta["post_time"],
         "surface": meta.get("surface"),
         "distance": int(meta["distance"]) if meta.get("distance") is not None else None,
         "horses": horses, "snapshots": snapshots,
     }
+    if result:
+        out["result"] = [{"pos": int(f["pos"]), "num": int(f["num"])}
+                         for f in result["finish"]]
+    return out
 
 
 def _latest_metrics(rid: str):

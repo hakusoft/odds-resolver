@@ -160,3 +160,28 @@ def parse_odds(html: str) -> dict | None:
         "horses": [horses[k] for k in order],
         "odds": [odds[k] for k in order],
     }
+
+
+def parse_result(html: str) -> list[dict] | None:
+    """結果ページから着順を返す: [{pos, num}]（表の行順 = 着順）。
+    中止・取消・失格など非数値着順の行は含めない。想定外の構造なら None。
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    for t in soup.find_all("table", class_="dataTable"):
+        rows = t.find_all("tr")
+        if not rows:
+            continue
+        head = [c.get_text(strip=True) for c in rows[0].find_all(["th", "td"])]
+        if "着順" not in head or "馬番" not in head:
+            continue
+        i_pos, i_num = head.index("着順"), head.index("馬番")
+        finish = []
+        for tr in rows[1:]:
+            cells = [c.get_text(strip=True) for c in tr.find_all(["td", "th"])]
+            if len(cells) <= max(i_pos, i_num):
+                continue
+            if not (cells[i_pos].isdigit() and cells[i_num].isdigit()):
+                continue
+            finish.append({"pos": int(cells[i_pos]), "num": int(cells[i_num])})
+        return finish or None
+    return None

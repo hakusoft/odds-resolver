@@ -95,5 +95,9 @@ def _load_days() -> list[dict]:
 
 
 def handler(event, context):
+    if isinstance(event, dict) and event.get("mode") == "yesterday":
+        # 朝の窓で回収した前日の着順を view へ反映する再焼き（Issue #52）
+        return run(time.strftime("%Y%m%d",
+                                 time.gmtime(time.time() + 9 * 3600 - 24 * 3600)))
     date = event.get("date") if isinstance(event, dict) else None
     return run(date)
