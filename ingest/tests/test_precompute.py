@@ -89,3 +89,27 @@ def test_fetch_closes_slots_even_when_metrics_unavailable(monkeypatch):
     assert len(written) == 1
     assert "top1" not in written[0]
     assert "T-8" in written[0]["closed_slots"]
+
+
+def test_race_normalizes_zero_odds_to_null(monkeypatch):
+    api = _api(monkeypatch)
+
+    def fake_query(pk, limit=None, desc=False):
+        if pk.startswith("DAY#"):
+            return [{
+                "pk": "DAY#20260727", "sk": "RACE#20260727-mo-03",
+                "race_id": "20260727-mo-03", "venue": "盛岡",
+                "race_no": Decimal(3), "post_time": "12:55", "name": "x",
+                "n_horses": Decimal(2), "surface": "ダ", "distance": Decimal(1200),
+            }]
+        return [{
+            "pk": pk, "sk": "TS#10:23", "time": "10:23",
+            "horses": [{"num": Decimal(1), "name": "ア"},
+                       {"num": Decimal(2), "name": "ベ"}],
+            "odds": [Decimal("0"), Decimal("2.5")],
+        }]
+
+    monkeypatch.setattr(api, "_query", fake_query)
+    race = api._race("20260727-mo-03")
+    # 格納済みの 0.0（過去データ）も読み出しで null へ正規化される
+    assert race["snapshots"][0]["odds"] == [None, 2.5]

@@ -149,7 +149,10 @@ def parse_odds(html: str) -> dict | None:
             continue
         horses.append({"num": int(cells[i_num]), "name": cells[i_name]})
         mo = re.match(r"^([\d.]+)$", cells[i_odds])
-        odds.append(float(mo.group(1)) if mo else None)
+        # 発売直後の未投票馬は「0.0」と表示される。0 はオッズとして
+        # 存在しない値なので「まだ無い」= None に落とす
+        v = float(mo.group(1)) if mo else None
+        odds.append(v if v else None)
     if not horses:
         return None
     order = sorted(range(len(horses)), key=lambda k: horses[k]["num"])
