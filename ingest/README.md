@@ -26,6 +26,10 @@
   スナップショットには slot と実取得時刻の両方を記録し、取り逃しは
   closed_slots に「閉じたが snapshot が無い」形で残る = 明示的な欠測。
   数字は仮置きで、実測調整は #23。
+- **結果回収（#52）**: 朝の窓（0:16〜発売開始前）の空き分で、前日→前々日の
+  未回収の着順を発走順に 1 レースずつ取る。回収済みは DAY 器の result_ok、
+  空振りは result_attempt（30 分クールダウン）で追跡。2:30 JST の archive
+  再焼き（mode=yesterday）で S3 view に反映される。
 - 取得元の詳細（サイト名・URL・DOM 依存）は公開物に書かず、このディレクトリ内に閉じる。
 
 ## 出力データの配置
@@ -37,7 +41,7 @@ archive が焼く view と read-api は同一スキーマ（archive が api の�
 | --- | --- | --- |
 | `data/days.json` | 開催日の目次（archive が管理） | 60 秒 |
 | `data/{YYYYMMDD}/index.json` | 日別一覧 + 事前計算指標（top1 / ent） | 1 時間 |
-| `data/races/{race_id}.json` | レース詳細（馬・全スナップショット） | 24 時間 |
+| `data/races/{race_id}.json` | レース詳細（馬・全スナップショット・着順 `result`） | 24 時間 |
 | `api/?date=` `api/?id=` | 当日の同スキーマ JSON（DynamoDB 直読み） | 60 秒 |
 
 ## テスト

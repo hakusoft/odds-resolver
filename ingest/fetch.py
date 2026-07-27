@@ -26,7 +26,7 @@ from boto3.dynamodb.conditions import Key
 
 from . import source
 from .metrics import support_metrics
-from .parse import parse_odds
+from .parse import parse_odds, parse_result
 
 _TABLE = boto3.resource("dynamodb").Table(os.environ["TABLE_NAME"])
 
@@ -110,7 +110,7 @@ def _pick(now: float, races: list[dict]) -> tuple[dict, int | None, bool] | None
 
     優先順位: 確定 > 勝負どころ > ベースライン。
     同段内は「スロット超過 ÷ 許容窓」の比率最大（同点は発走が近い方）。
-    ベースラインは 8:00 JST 以降のみ・空振り後 30 分は再試行しない。
+    ベースラインは発売開始（10:00 JST）以降のみ・空振り後 30 分は再試行しない。
     """
     near = base = None  # (score, race, slot)
     for r in races:
@@ -150,16 +150,55 @@ def _pick(now: float, races: list[dict]) -> tuple[dict, int | None, bool] | None
     return hit[1], hit[2], False
 
 
+def _pick_result(now: float) -> dict | None:
+    """前日→前々日の順で、着順が未回収のレースを発走順に 1 つ返す。
+
+    朝の窓（発売開始前）だけの仕事。前々日まで見るのは、取り逃しの
+    自己修復と初回移行のため（DAY 器の TTL が 2 日なのでそれ以遠は無い）。
+    """
+    if jst_hour(now) >= _BASELINE_START_HOUR:
+        return None
+    for back in (1, 2):
+        day = jst_today(now - back * 24 * 3600)
+        cands = []
+        for r in _races_today(day):
+            if r.get("result_ok") or not r.get("source_key"):
+                continue
+            last = r.get("result_attempt")
+            if last is not None and now - float(last) < _ATTEMPT_COOLDOWN_SEC:
+                continue
+            cands.append(r)
+        if cands:
+            return min(cands, key=lambda r: r["post_time"])
+    return None
+
+
+def _run_result(now: float, date: str) -> dict:
+    """オッズの仕事が無い分の空きで、前日結果を 1 レース回収する。"""
+    race = _pick_result(now)
+    if race is None:
+        return {"date": date, "picked": None}
+    html = source.fetch(source.result_path(race["source_key"]))
+    finish = parse_result(html)
+    if finish is None:
+        _record_attempt(race, now, attr="result_attempt")
+        return {"date": date, "picked": race["race_id"], "note": "result parse failed"}
+    _put_result(race["race_id"], finish, now)
+    race["result_ok"] = True
+    race.pop("result_attempt", None)
+    _TABLE.put_item(Item=race)
+    return {"date": date, "picked": race["race_id"],
+            "result": len(finish)}
+
+
 def run(now: float | None = None) -> dict:
     now = now or _now()
     date = jst_today(now)
     races = _races_today(date)
-    if not races:
-        return {"date": date, "picked": None, "note": "no races"}
 
-    picked = _pick(now, races)
+    picked = _pick(now, races) if races else None
     if picked is None:
-        return {"date": date, "picked": None}
+        return _run_result(now, date)
     race, slot, is_final = picked
 
     key = race.get("source_key")
@@ -224,10 +263,22 @@ def _update_day_after_snapshot(race: dict, parsed: dict, minutes_to_post: float)
     _TABLE.put_item(Item=race)
 
 
-def _record_attempt(race: dict, now: float):
+def _record_attempt(race: dict, now: float, attr: str = "last_attempt"):
     from decimal import Decimal
-    race["last_attempt"] = Decimal(str(int(now)))
+    race[attr] = Decimal(str(int(now)))
     _TABLE.put_item(Item=race)
+
+
+def _put_result(race_id: str, finish: list[dict], now: float):
+    from decimal import Decimal
+    _TABLE.put_item(Item={
+        "pk": f"RACE#{race_id}",
+        "sk": "RESULT",
+        "finish": [{"pos": Decimal(f["pos"]), "num": Decimal(f["num"])}
+                   for f in finish],
+        "fetched_at": Decimal(str(int(now))),
+        "expires_at": int(now) + _TTL_DAYS * 24 * 3600,
+    })
 
 
 def handler(event, context):
