@@ -112,15 +112,23 @@ def _race(rid: str) -> dict:
 
 
 def _latest_metrics(rid: str):
-    """最新スナップショットの支持率から top1/ent を計算。無ければ None。"""
-    snaps = _query(f"RACE#{rid}", limit=1, desc=True)
+    """最新スナップショットの支持率から top1/ent を計算。無ければ None。
+
+    sk を TS# に絞るのが要。RESULT 項目と同居しているため、スナップ
+    ショット 0 件のレースで降順 Limit 1 が RESULT を掴む事故を防ぐ（#63）。
+    """
+    snaps = _query(f"RACE#{rid}", limit=1, desc=True, sk_prefix="TS#")
     if not snaps:
         return None
     return support_metrics(snaps[0]["odds"])
 
 
-def _query(pk: str, limit: int | None = None, desc: bool = False):
-    kw = {"KeyConditionExpression": Key("pk").eq(pk)}
+def _query(pk: str, limit: int | None = None, desc: bool = False,
+           sk_prefix: str | None = None):
+    cond = Key("pk").eq(pk)
+    if sk_prefix:
+        cond = cond & Key("sk").begins_with(sk_prefix)
+    kw = {"KeyConditionExpression": cond}
     if limit:
         kw["Limit"] = limit
     if desc:

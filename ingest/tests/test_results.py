@@ -114,3 +114,31 @@ def test_api_race_exposes_result_and_keeps_snapshots(monkeypatch):
     # RESULT 項目がスナップショット列や馬名の解決を汚さない
     assert race["horses"][0]["name"] == "ア"
     assert len(race["snapshots"]) == 1 and race["snapshots"][0]["slot"] == "T-45"
+
+
+def test_index_survives_result_only_race(monkeypatch):
+    """スナップショット 0 件 + RESULT ありのレースが index を壊さない（#63）。"""
+    monkeypatch.setenv("TABLE_NAME", "dummy")
+    import importlib
+    from ingest import api
+    importlib.reload(api)
+
+    def fake_query(pk, limit=None, desc=False, sk_prefix=None):
+        if pk.startswith("DAY#"):
+            return [{
+                "pk": "DAY#20260726", "sk": "RACE#20260726-mo-01",
+                "race_id": "20260726-mo-01", "venue": "盛岡",
+                "race_no": Decimal(1), "post_time": "12:25", "name": "x",
+                "n_horses": Decimal(2), "surface": "ダ", "distance": Decimal(1200),
+            }]
+        items = [{"pk": pk, "sk": "RESULT",
+                  "finish": [{"pos": Decimal(1), "num": Decimal(1)}]}]
+        if sk_prefix:
+            items = [i for i in items if i["sk"].startswith(sk_prefix)]
+        items.sort(key=lambda x: x["sk"], reverse=desc)
+        return items[:limit] if limit else items
+
+    monkeypatch.setattr(api, "_query", fake_query)
+    idx = api._index("20260726")
+    assert len(idx["races"]) == 1
+    assert "top1" not in idx["races"][0]  # 指標なしで静かにスキップ
