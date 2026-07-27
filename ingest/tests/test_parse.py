@@ -47,3 +47,18 @@ def test_race_id_format():
 
 def test_day_list_empty_on_wrong_date():
     assert parse_day_list(_read("day_list.html"), "20990101") == []
+
+
+def test_parse_odds_zero_becomes_none():
+    # 発売直後の未投票馬は「0.0」と表示される。fixture 不要の合成 HTML で検証
+    from ingest.parse import parse_odds
+    html = """
+    <table class="dataTable">
+      <tr><th>馬番</th><th>馬名</th><th>単勝オッズ</th></tr>
+      <tr><td>1</td><td>アルファ</td><td>0.0</td></tr>
+      <tr><td>2</td><td>ベータ</td><td>2.5</td></tr>
+      <tr><td>3</td><td>ガンマ</td><td>取消</td></tr>
+    </table>"""
+    p = parse_odds(html)
+    assert [h["num"] for h in p["horses"]] == [1, 2, 3]
+    assert p["odds"] == [None, 2.5, None]

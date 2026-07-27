@@ -93,7 +93,7 @@ def _race(rid: str) -> dict:
         snapshots = [{
             "time": s["time"],
             **({"slot": s["slot"]} if "slot" in s else {}),
-            "odds": [float(o) if o is not None else None for o in s["odds"]],
+            "odds": [float(o) if o else None for o in s["odds"]],
         } for s in snaps]
 
     return {

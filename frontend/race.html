@@ -262,11 +262,11 @@
       }
 
       const support = race.snapshots.map(s => {
-        const inv = s.odds.map(o => 1 / o);
+        const inv = s.odds.map(o => (o ? 1 / o : 0));
         const sum = inv.reduce((a, b) => a + b, 0);
-        return inv.map(v => v / sum);
+        return sum > 0 ? inv.map(v => v / sum) : inv.map(() => 0);
       });
-      const maxS = Math.max(...support.flat());
+      const maxS = Math.max(...support.flat(), 1e-9);
 
       const nH = race.horses.length, nT = race.snapshots.length;
       const w = LEFT + nT * (CELL_W + GAP);
@@ -319,7 +319,7 @@
             tooltip.replaceChildren();
             const v = document.createElement("div");
             v.className = "val";
-            v.textContent = `${s.odds[j].toFixed(1)} 倍`;
+            v.textContent = s.odds[j] ? `${s.odds[j].toFixed(1)} 倍` : "オッズなし";
             const l = document.createElement("div");
             l.className = "lbl";
             l.textContent = `${horse.num} ${horse.name} / ${s.time} / 支持率 ${(support[i][j] * 100).toFixed(1)}%`;
@@ -361,7 +361,7 @@
       const tbody = document.createElement("tbody");
       race.horses.forEach((horse, j) => {
         const tr = document.createElement("tr");
-        [`${horse.num} ${horse.name}`, `${last.odds[j].toFixed(1)}`,
+        [`${horse.num} ${horse.name}`, last.odds[j] ? `${last.odds[j].toFixed(1)}` : "—",
          `${(lastSupport[j] * 100).toFixed(1)}%`].forEach(x => {
           const td = document.createElement("td");
           td.textContent = x;
