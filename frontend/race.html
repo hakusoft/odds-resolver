@@ -268,8 +268,9 @@
       });
       const maxS = Math.max(...support.flat(), 1e-9);
 
+      const posByNum = new Map((race.result || []).map(r => [r.num, r.pos]));
       const nH = race.horses.length, nT = race.snapshots.length;
-      const w = LEFT + nT * (CELL_W + GAP);
+      const w = LEFT + nT * (CELL_W + GAP) + (posByNum.size ? 44 : 0);
       const h = TOP + nH * (CELL_H + GAP);
 
       const svgNS = "http://www.w3.org/2000/svg";
@@ -301,6 +302,18 @@
         tx.setAttribute("fill", "var(--text-primary)");
         tx.textContent = `${horse.num} ${horse.name}`;
         svg.appendChild(tx);
+
+        const pos = posByNum.get(horse.num);
+        if (pos && pos <= 3) {
+          const badge = document.createElementNS(svgNS, "text");
+          badge.setAttribute("x", LEFT + nT * (CELL_W + GAP) + 8);
+          badge.setAttribute("y", ty + 4);
+          badge.setAttribute("font-size", "12");
+          badge.setAttribute("fill", pos === 1 ? "var(--hot)" : "var(--text-secondary)");
+          if (pos === 1) badge.setAttribute("font-weight", "700");
+          badge.textContent = `${pos}着`;
+          svg.appendChild(badge);
+        }
 
         race.snapshots.forEach((s, i) => {
           const t = support[i][j] / maxS;
@@ -352,7 +365,10 @@
       const table = document.getElementById("data-table");
       const thead = document.createElement("thead");
       const hr = document.createElement("tr");
-      ["馬", `オッズ (${last.time})`, "支持率"].forEach(x => {
+      const cols = posByNum.size
+        ? ["馬", "着順", `オッズ (${last.time})`, "支持率"]
+        : ["馬", `オッズ (${last.time})`, "支持率"];
+      cols.forEach(x => {
         const th = document.createElement("th");
         th.textContent = x;
         hr.appendChild(th);
@@ -361,8 +377,14 @@
       const tbody = document.createElement("tbody");
       race.horses.forEach((horse, j) => {
         const tr = document.createElement("tr");
-        [`${horse.num} ${horse.name}`, last.odds[j] ? `${last.odds[j].toFixed(1)}` : "—",
-         `${(lastSupport[j] * 100).toFixed(1)}%`].forEach(x => {
+        const cells = [`${horse.num} ${horse.name}`];
+        if (posByNum.size) {
+          const p = posByNum.get(horse.num);
+          cells.push(p ? `${p}` : "—");
+        }
+        cells.push(last.odds[j] ? `${last.odds[j].toFixed(1)}` : "—",
+                   `${(lastSupport[j] * 100).toFixed(1)}%`);
+        cells.forEach(x => {
           const td = document.createElement("td");
           td.textContent = x;
           tr.appendChild(td);
