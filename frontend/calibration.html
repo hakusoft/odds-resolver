@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OddsResolver — 較正</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --surface-1: #fbfcfd; --surface-2: #eff1f5;
+      --text-primary: #0b0c0f; --text-secondary: #4f5560;
+      --border: #d6dae1; --accent: #2d539e; --hot: #a02c2c;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --surface-1: #151823; --surface-2: #1e2230;
+        --text-primary: #ffffff; --text-secondary: #b7bfd3;
+        --border: #343a4c; --accent: #84a0c6; --hot: #e27878;
+      }
+    }
+    :root[data-theme="light"] {
+      --surface-1: #fbfcfd; --surface-2: #eff1f5;
+      --text-primary: #0b0c0f; --text-secondary: #4f5560;
+      --border: #d6dae1; --accent: #2d539e; --hot: #a02c2c;
+    }
+    :root[data-theme="dark"] {
+      --surface-1: #151823; --surface-2: #1e2230;
+      --text-primary: #ffffff; --text-secondary: #b7bfd3;
+      --border: #343a4c; --accent: #84a0c6; --hot: #e27878;
+    }
+    :root { --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+    body {
+      margin: 0; background: var(--surface-1); color: var(--text-primary);
+      font-family: system-ui, sans-serif; line-height: 1.5;
+    }
+    main { max-width: 760px; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+    .masthead {
+      display: flex; align-items: center; justify-content: space-between;
+      border-bottom: 1px solid var(--border); padding-bottom: 1rem; margin-bottom: 1.5rem;
+    }
+    .brand { display: flex; align-items: center; gap: 0.6rem; text-decoration: none; color: inherit; }
+    .brand-mark { display: grid; grid-template-columns: repeat(3, 6px); gap: 2px; }
+    .brand-mark span { width: 6px; height: 6px; background: var(--accent); border-radius: 2px; }
+    .brand-mark span:nth-child(3) { background: var(--hot); }
+    .brand h1 { font-size: 1.15rem; margin: 0; font-family: var(--font-mono); letter-spacing: -0.02em; }
+    .theme-btn {
+      background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+      width: 38px; height: 38px; cursor: pointer; color: var(--text-primary); font-size: 1rem;
+    }
+    .theme-btn:hover { border-color: var(--accent); }
+    h2 { font-size: 1.05rem; margin: 0 0 0.3rem; }
+    .sub { color: var(--text-secondary); font-size: 0.85rem; margin: 0 0 1rem; }
+    .chart-wrap { overflow-x: auto; }
+    svg { display: block; }
+    .legend { display: flex; gap: 1.2rem; font-size: 0.8rem; color: var(--text-secondary); margin: 0.8rem 0 0.2rem; }
+    .legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
+    .swatch { width: 11px; height: 11px; border-radius: 3px; }
+    table { border-collapse: collapse; font-size: 0.8rem; margin-top: 1.2rem; width: 100%; }
+    th, td { padding: 0.35rem 0.6rem; border-bottom: 1px solid var(--border); text-align: right; }
+    th:first-child, td:first-child { text-align: left; }
+    thead th { color: var(--text-secondary); font-weight: 600; }
+    td.num { font-family: var(--font-mono); }
+    .pos { color: var(--accent); }
+    .neg { color: var(--hot); }
+    .meta { color: var(--text-secondary); font-size: 0.8rem; margin-top: 1.5rem; }
+    footer { color: var(--text-secondary); font-size: 0.78rem; margin-top: 2rem;
+             border-top: 1px solid var(--border); padding-top: 1rem; }
+    #tooltip {
+      position: fixed; pointer-events: none; opacity: 0; transition: opacity 0.08s;
+      background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+      padding: 0.5rem 0.7rem; font-size: 0.8rem; box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+      z-index: 10; max-width: 240px;
+    }
+    #tooltip .v { font-family: var(--font-mono); font-weight: 700; }
+    #status { color: var(--text-secondary); }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="masthead">
+      <a class="brand" href="index.html">
+        <span class="brand-mark"><span></span><span></span><span></span><span></span><span></span><span></span></span>
+        <h1>Odds<span style="font-weight:300;opacity:.8">Resolver</span></h1>
+      </a>
+      <button class="theme-btn" id="themetoggle" type="button"></button>
+    </div>
+
+    <h2>支持率の較正</h2>
+    <p class="sub">横軸 = 大衆の予想勝率（支持率 = 1/オッズ の正規化）、縦軸 = 実際の勝率。
+      点が対角線より<strong>上なら大衆が過小評価（妙味）</strong>、下なら過大評価。</p>
+
+    <p id="status">読み込み中…</p>
+    <div class="chart-wrap"><div id="chart"></div></div>
+    <div class="legend" id="legend" hidden>
+      <span><span class="swatch" style="background:var(--accent)"></span>実勝率 &gt; 予想（過小評価）</span>
+      <span><span class="swatch" style="background:var(--hot)"></span>実勝率 &lt; 予想（過大評価）</span>
+    </div>
+
+    <table id="table" hidden></table>
+    <p class="meta" id="meta"></p>
+
+    <footer>
+      各点は支持率帯にまとめた集計で、標本が少ない帯は誤差が大きい。
+      オッズは取得時点の参考値で、的中・回収を保証しない。馬券の購入は20歳から。 © 2026 OddsResolver
+    </footer>
+  </main>
+  <div id="tooltip"></div>
+
+  <script>
+    (function () {
+      const t = localStorage.getItem("theme");
+      if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+    })();
+    const themeBtn = document.getElementById("themetoggle");
+    function paintTheme() {
+      const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+      const set = document.documentElement.dataset.theme;
+      const isDark = set ? set === "dark" : dark;
+      themeBtn.textContent = isDark ? "☀︎" : "☾";
+      themeBtn.setAttribute("aria-label", isDark ? "ライトモードに切り替え" : "ダークモードに切り替え");
+    }
+    paintTheme();
+    themeBtn.addEventListener("click", () => {
+      const cur = document.documentElement.dataset.theme
+        || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      const next = cur === "dark" ? "light" : "dark";
+      document.documentElement.dataset.theme = next;
+      localStorage.setItem("theme", next);
+      paintTheme();
+    });
+
+    const PAD = 48, SIZE = 420;
+    const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+    function render(doc) {
+      const bins = (doc.total || []).filter(b => b.n > 0 && b.mean_support != null);
+      if (!bins.length) {
+        document.getElementById("status").textContent = "まだ較正できるデータがありません。";
+        return;
+      }
+      document.getElementById("status").hidden = true;
+      document.getElementById("legend").hidden = false;
+
+      const svgNS = "http://www.w3.org/2000/svg";
+      const svg = document.createElementNS(svgNS, "svg");
+      const W = SIZE + PAD * 2, H = SIZE + PAD * 2;
+      svg.setAttribute("width", W); svg.setAttribute("height", H);
+      svg.setAttribute("role", "img");
+      svg.setAttribute("aria-label", "支持率と実勝率の較正散布図");
+      const x = v => PAD + v * SIZE;
+      const y = v => PAD + SIZE - v * SIZE;
+
+      // 最大値: 帯の平均支持率・実勝率のうち最大を上限に（0.6 下限で見やすく）
+      const maxV = Math.max(0.6, ...bins.map(b => Math.max(b.mean_support, b.win_rate)));
+      const xn = v => x(v / maxV), yn = v => y(v / maxV);
+
+      // グリッド + 軸ラベル
+      const ticks = [0, 0.2, 0.4, 0.6, 0.8, 1.0].filter(v => v <= maxV + 1e-9);
+      for (const tk of ticks) {
+        for (const [x1, y1, x2, y2] of [[xn(tk), yn(0), xn(tk), yn(maxV)],
+                                        [xn(0), yn(tk), xn(maxV), yn(tk)]]) {
+          const ln = document.createElementNS(svgNS, "line");
+          ln.setAttribute("x1", x1); ln.setAttribute("y1", y1);
+          ln.setAttribute("x2", x2); ln.setAttribute("y2", y2);
+          ln.setAttribute("stroke", cssVar("--border")); ln.setAttribute("stroke-width", "1");
+          svg.appendChild(ln);
+        }
+        const lx = document.createElementNS(svgNS, "text");
+        lx.setAttribute("x", xn(tk)); lx.setAttribute("y", yn(0) + 18);
+        lx.setAttribute("text-anchor", "middle"); lx.setAttribute("font-size", "11");
+        lx.setAttribute("fill", cssVar("--text-secondary"));
+        lx.textContent = Math.round(tk * 100) + "%"; svg.appendChild(lx);
+        const ly = document.createElementNS(svgNS, "text");
+        ly.setAttribute("x", xn(0) - 8); ly.setAttribute("y", yn(tk) + 4);
+        ly.setAttribute("text-anchor", "end"); ly.setAttribute("font-size", "11");
+        ly.setAttribute("fill", cssVar("--text-secondary"));
+        ly.textContent = Math.round(tk * 100) + "%"; svg.appendChild(ly);
+      }
+      // 対角 y=x（完全較正の基準線）
+      const diag = document.createElementNS(svgNS, "line");
+      diag.setAttribute("x1", xn(0)); diag.setAttribute("y1", yn(0));
+      diag.setAttribute("x2", xn(maxV)); diag.setAttribute("y2", yn(maxV));
+      diag.setAttribute("stroke", cssVar("--text-secondary"));
+      diag.setAttribute("stroke-width", "1.5"); diag.setAttribute("stroke-dasharray", "5 4");
+      svg.appendChild(diag);
+
+      const tooltip = document.getElementById("tooltip");
+      // 折れ線（帯の並び順）
+      const path = bins.map((b, i) => `${i ? "L" : "M"}${xn(b.mean_support)},${yn(b.win_rate)}`).join(" ");
+      const pl = document.createElementNS(svgNS, "path");
+      pl.setAttribute("d", path); pl.setAttribute("fill", "none");
+      pl.setAttribute("stroke", cssVar("--text-secondary")); pl.setAttribute("stroke-width", "1.5");
+      pl.setAttribute("opacity", "0.5"); svg.appendChild(pl);
+
+      // 各帯の点。標本数で半径、乖離の正負で色
+      const maxN = Math.max(...bins.map(b => b.n));
+      for (const b of bins) {
+        const diff = b.win_rate - b.mean_support;
+        const c = document.createElementNS(svgNS, "circle");
+        c.setAttribute("cx", xn(b.mean_support)); c.setAttribute("cy", yn(b.win_rate));
+        c.setAttribute("r", 5 + 7 * Math.sqrt(b.n / maxN));
+        c.setAttribute("fill", diff >= 0 ? cssVar("--accent") : cssVar("--hot"));
+        c.setAttribute("fill-opacity", "0.85");
+        c.setAttribute("stroke", cssVar("--surface-1")); c.setAttribute("stroke-width", "2");
+        c.setAttribute("tabindex", "0");
+        const label = `${Math.round(b.lo*100)}–${Math.round(b.hi*100)}% 帯`;
+        const show = ev => {
+          tooltip.replaceChildren();
+          const v = document.createElement("div"); v.className = "v";
+          v.textContent = `予想 ${(b.mean_support*100).toFixed(1)}% → 実 ${(b.win_rate*100).toFixed(1)}%`;
+          const d = document.createElement("div");
+          d.textContent = `${label} / n=${b.n} / 差 ${diff>=0?"+":""}${(diff*100).toFixed(1)}pt`;
+          tooltip.append(v, d);
+          tooltip.style.opacity = "1";
+          const px = ev.clientX ?? c.getBoundingClientRect().x;
+          const py = ev.clientY ?? c.getBoundingClientRect().y;
+          tooltip.style.left = Math.min(px + 14, innerWidth - 250) + "px";
+          tooltip.style.top = (py + 14) + "px";
+        };
+        const hide = () => { tooltip.style.opacity = "0"; };
+        c.addEventListener("pointermove", show);
+        c.addEventListener("pointerleave", hide);
+        c.addEventListener("focus", show);
+        c.addEventListener("blur", hide);
+        svg.appendChild(c);
+      }
+      // 軸見出し
+      const xl = document.createElementNS(svgNS, "text");
+      xl.setAttribute("x", xn(maxV/2)); xl.setAttribute("y", H - 6);
+      xl.setAttribute("text-anchor", "middle"); xl.setAttribute("font-size", "12");
+      xl.setAttribute("fill", cssVar("--text-primary")); xl.textContent = "大衆の予想勝率（支持率）";
+      svg.appendChild(xl);
+      const yl = document.createElementNS(svgNS, "text");
+      yl.setAttribute("transform", `rotate(-90 14 ${PAD + SIZE/2})`);
+      yl.setAttribute("x", 14); yl.setAttribute("y", PAD + SIZE/2);
+      yl.setAttribute("text-anchor", "middle"); yl.setAttribute("font-size", "12");
+      yl.setAttribute("fill", cssVar("--text-primary")); yl.textContent = "実際の勝率";
+      svg.appendChild(yl);
+
+      document.getElementById("chart").appendChild(svg);
+      buildTable(bins);
+      const m = document.getElementById("meta");
+      m.textContent = `集計期間: ${doc.n_days || 0} 日 / ${doc.n_races || 0} レース。`
+        + "標本が増えるほど各点の位置は安定する。";
+    }
+
+    function buildTable(bins) {
+      const table = document.getElementById("table");
+      table.hidden = false;
+      const head = document.createElement("thead");
+      const hr = document.createElement("tr");
+      ["支持率帯", "頭数", "予想勝率", "実勝率", "差"].forEach(h => {
+        const th = document.createElement("th"); th.textContent = h; hr.appendChild(th);
+      });
+      head.appendChild(hr);
+      const body = document.createElement("tbody");
+      for (const b of bins) {
+        const diff = b.win_rate - b.mean_support;
+        const tr = document.createElement("tr");
+        const cells = [
+          [`${Math.round(b.lo*100)}–${Math.round(b.hi*100)}%`, ""],
+          [String(b.n), "num"],
+          [`${(b.mean_support*100).toFixed(1)}%`, "num"],
+          [`${(b.win_rate*100).toFixed(1)}%`, "num"],
+          [`${diff>=0?"+":""}${(diff*100).toFixed(1)}pt`, "num " + (diff>=0?"pos":"neg")],
+        ];
+        for (const [txt, cls] of cells) {
+          const td = document.createElement("td");
+          td.textContent = txt; if (cls) td.className = cls; tr.appendChild(td);
+        }
+        body.appendChild(tr);
+      }
+      table.append(head, body);
+    }
+
+    (async () => {
+      try {
+        const res = await fetch("data/calibration.json?v=" + Date.now());
+        if (!res.ok) throw new Error(String(res.status));
+        render(await res.json());
+      } catch (e) {
+        document.getElementById("status").textContent = "較正データを読み込めませんでした。";
+      }
+    })();
+  </script>
+</body>
+</html>

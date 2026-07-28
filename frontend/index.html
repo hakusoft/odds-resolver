@@ -78,6 +78,12 @@
       line-height: 1;
     }
     .theme-btn:hover { border-color: var(--accent); }
+    .head-actions { display: flex; align-items: center; gap: 0.7rem; }
+    .head-link {
+      color: var(--text-secondary); text-decoration: none; font-size: 0.9rem;
+      padding: 0.3rem 0.2rem; border-bottom: 1.5px solid transparent;
+    }
+    .head-link:hover { color: var(--accent); border-bottom-color: var(--accent); }
     .theme-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     .masthead {
       display: flex;
@@ -401,7 +407,10 @@
         <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span></span>
         <h1>Odds<span style="font-weight:300;opacity:.8">Resolver</span></h1>
       </a>
-      <button class="theme-btn" id="themetoggle" type="button"></button>
+      <div class="head-actions">
+        <a class="head-link" href="calibration.html">較正</a>
+        <button class="theme-btn" id="themetoggle" type="button"></button>
+      </div>
     </header>
     <p class="empty" id="status">読み込み中…</p>
     <section id="nextsec" hidden>
