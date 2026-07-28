@@ -27,6 +27,7 @@ from boto3.dynamodb.conditions import Key
 from . import source
 from .metrics import support_metrics
 from .parse import parse_odds, parse_result
+from .surge import detect_surges
 
 _TABLE = boto3.resource("dynamodb").Table(os.environ["TABLE_NAME"])
 
@@ -219,7 +220,9 @@ def run(now: float | None = None) -> dict:
 
     minutes = (_post_epoch(race["race_id"][:8], race["post_time"]) - now) / 60.0
     label = "F" if is_final else _slot_label(slot)
+    prev = _latest_snapshot_odds(race["race_id"])  # 追記前に前回を取る
     _append_snapshot(race["race_id"], now, parsed, is_final, label)
+    _notify_surges(race, prev, parsed, minutes)
     _update_day_after_snapshot(race, parsed, minutes)
     return {"date": date, "picked": race["race_id"],
             "time": jst_hm(now), "slot": label, "final": is_final,
@@ -263,6 +266,61 @@ def _update_day_after_snapshot(race: dict, parsed: dict, minutes_to_post: float)
     race["closed_slots"] = sorted(closed, key=lambda l: int(l[2:]))
     race.pop("last_attempt", None)
     _TABLE.put_item(Item=race)
+
+
+def _latest_snapshot_odds(race_id: str) -> list | None:
+    """直近スナップショットのオッズ列を返す（急変判定の基準・#71）。"""
+    items = _TABLE.query(
+        KeyConditionExpression=(
+            Key("pk").eq(f"RACE#{race_id}") & Key("sk").begins_with("TS#")),
+        ScanIndexForward=False, Limit=1,
+    ).get("Items", [])
+    if not items:
+        return None
+    return [float(o) if o is not None else None for o in items[0]["odds"]]
+
+
+def _notify_surges(race: dict, prev_odds: list | None, parsed: dict,
+                   minutes_to_post: float):
+    """支持率が急上昇した馬を SNS へ通知する（#71）。
+
+    重複抑制は DAY 器の surged（通知済み馬番）で行う。race dict に
+    surged を積んでおけば直後の _update_day_after_snapshot の
+    put_item（全置換）で一緒に永続化され、追加の書き込みが要らない。
+    SNS 未設定（トピック ARN 無し）なら判定だけして送らない。
+    """
+    from decimal import Decimal
+    surges = detect_surges(prev_odds, parsed["odds"], parsed["horses"],
+                           minutes_to_post)
+    if not surges:
+        return
+    already = {int(n) for n in (race.get("surged") or [])}
+    fresh = [s for s in surges if s["num"] not in already]
+    if not fresh:
+        return
+    _publish_surges(race, fresh, minutes_to_post)
+    race["surged"] = sorted(already | {s["num"] for s in fresh})
+    race["surged"] = [Decimal(n) for n in race["surged"]]
+
+
+def _publish_surges(race: dict, surges: list, minutes_to_post: float):
+    topic = os.environ.get("SURGE_TOPIC_ARN")
+    if not topic:
+        return  # 通知先未設定。判定・記録は済ませ、送信だけしない
+    lines = [f"{race['venue']} {int(race['race_no'])}R "
+             f"（発走 {race['post_time']}・あと約{int(minutes_to_post)}分）",
+             "支持率が急上昇しました:"]
+    for s in surges:
+        lines.append(f"  {s['num']} {s['name']}  "
+                     f"{s['prev']*100:.0f}% → {s['curr']*100:.0f}% "
+                     f"(+{s['delta']*100:.0f}pt)")
+    lines.append("")
+    lines.append("※取得は最大2分遅れ・締切に間に合う保証はありません。"
+                 "馬券判断は自己責任で。")
+    boto3.client("sns").publish(
+        TopicArn=topic,
+        Subject=f"急変 {race['venue']}{int(race['race_no'])}R",
+        Message="\n".join(lines))
 
 
 def _record_attempt(race: dict, now: float, attr: str = "last_attempt"):
