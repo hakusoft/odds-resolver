@@ -15,3 +15,40 @@ def support_metrics(odds: list) -> tuple[float, float] | None:
     ent = -sum(x * math.log(x) for x in p if x > 0)
     ent_norm = ent / math.log(len(p)) if len(p) > 1 else 0.0
     return round(p[0], 3), round(ent_norm, 3)
+
+
+# 較正曲線（#53）の支持率ビン境界。大衆の予想勝率（支持率）と実勝率を
+# 帯別に突き合わせる。低支持率側を細かく切るのは favorite-longshot bias
+# （大穴の過大評価）が出やすい領域を解像度高く見るため。
+CALIB_BINS = [0.0, 0.05, 0.10, 0.15, 0.20, 0.30, 0.50, 1.0001]
+
+
+def calibration_bins(odds: list, winner_idx: int | None) -> list[dict] | None:
+    """確定オッズ列と勝ち馬の index から、支持率ビンごとの寄与を返す。
+
+    返り値は各ビンの {n, sum_support, wins}。全期間で単純加算すると
+    「そのビンに入った馬の頭数・支持率の合計・実際に勝った数」になり、
+    平均支持率 = sum_support/n（大衆の予想勝率）と 実勝率 = wins/n を
+    突き合わせれば較正のズレが出る。オッズが全滅なら None。
+    """
+    inv = [(1.0 / float(o) if o else 0.0) for o in odds]
+    s = sum(inv)
+    if s <= 0:
+        return None
+    bins = [{"n": 0, "sum_support": 0.0, "wins": 0}
+            for _ in range(len(CALIB_BINS) - 1)]
+    for i, x in enumerate(inv):
+        sup = x / s
+        b = _bin_index(sup)
+        bins[b]["n"] += 1
+        bins[b]["sum_support"] += sup
+        if i == winner_idx:
+            bins[b]["wins"] += 1
+    return bins
+
+
+def _bin_index(support: float) -> int:
+    for b in range(len(CALIB_BINS) - 1):
+        if CALIB_BINS[b] <= support < CALIB_BINS[b + 1]:
+            return b
+    return len(CALIB_BINS) - 2  # ちょうど 1.0 は最終ビンへ

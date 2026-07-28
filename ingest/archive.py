@@ -21,6 +21,7 @@ import time
 import boto3
 
 from .api import _index, _race
+from .metrics import CALIB_BINS, calibration_bins
 
 # キャッシュ方針: 目次類は短く、確定レースは長く（deploy.yml と同方針）
 _CC_DAYS = "public, max-age=60"
@@ -48,13 +49,19 @@ def run(date: str | None = None) -> dict:
     except KeyError:
         return {"date": date, "races": 0, "note": "no races"}
 
+    day_calib = _empty_calib()
+    n_scored = 0
     for r in index["races"]:
         race = _race(r["race_id"])
         _put(f"races/{r['race_id']}.json", race, _CC_RACE)
+        if _accumulate_calib(day_calib, race):
+            n_scored += 1
     _put(f"{date}/index.json", index, _CC_DAY_INDEX)
 
     days = _update_days(index)
-    return {"date": date, "races": len(index["races"]), "days": len(days)}
+    _update_calibration(date, day_calib, n_scored)
+    return {"date": date, "races": len(index["races"]), "days": len(days),
+            "calib_races": n_scored}
 
 
 def _put(key: str, body: dict, cache_control: str):
@@ -92,6 +99,79 @@ def _load_days() -> list[dict]:
         return json.loads(res["Body"].read()).get("days", [])
     except _get_s3().exceptions.NoSuchKey:
         return []
+
+
+# ---- 較正曲線の累積（Issue #53） --------------------------------------
+# calibration.json を data バケット正本で read-modify-write する。日別の
+# 寄与（by_date）を保持し、再焼き（着順の後追い反映）で同じ日を上書き
+# しても二重計上しない。全期間の集計は by_date の総和で組み立てる。
+
+def _empty_calib() -> list[dict]:
+    return [{"n": 0, "sum_support": 0.0, "wins": 0}
+            for _ in range(len(CALIB_BINS) - 1)]
+
+
+def _accumulate_calib(acc: list[dict], race: dict) -> bool:
+    """レース詳細から (支持率, 勝敗) を acc に足す。着順が無ければ False。"""
+    if not race.get("result") or not race.get("snapshots"):
+        return False
+    odds = race["snapshots"][-1]["odds"]
+    winner_num = next((r["num"] for r in race["result"] if r["pos"] == 1), None)
+    if winner_num is None:
+        return False
+    winner_idx = next((i for i, h in enumerate(race["horses"])
+                       if h["num"] == winner_num), None)
+    bins = calibration_bins(odds, winner_idx)
+    if bins is None:
+        return False
+    for a, b in zip(acc, bins):
+        a["n"] += b["n"]
+        a["sum_support"] += b["sum_support"]
+        a["wins"] += b["wins"]
+    return True
+
+
+def _update_calibration(date: str, day_calib: list[dict], n_races: int):
+    doc = _load_calibration()
+    # 再焼きで同日を上書きしても二重計上しないよう、日別に置き換える
+    doc["by_date"][date] = {"races": n_races, "bins": day_calib}
+    total = _empty_calib()
+    for entry in doc["by_date"].values():
+        for t, b in zip(total, entry["bins"]):
+            t["n"] += b["n"]
+            t["sum_support"] += b["sum_support"]
+            t["wins"] += b["wins"]
+    doc["bin_edges"] = CALIB_BINS
+    doc["total"] = _finalize_bins(total)
+    doc["n_days"] = len(doc["by_date"])
+    doc["n_races"] = sum(e["races"] for e in doc["by_date"].values())
+    # 毎日更新される累積ファイルなので目次類と同じ短キャッシュにする
+    _put("calibration.json", doc, _CC_DAYS)
+
+
+def _finalize_bins(total: list[dict]) -> list[dict]:
+    """集計から表示用の (平均支持率, 実勝率) を付ける。"""
+    out = []
+    for i, b in enumerate(total):
+        n = b["n"]
+        out.append({
+            "lo": CALIB_BINS[i], "hi": CALIB_BINS[i + 1], "n": n,
+            "mean_support": round(b["sum_support"] / n, 4) if n else None,
+            "win_rate": round(b["wins"] / n, 4) if n else None,
+            "wins": b["wins"],
+        })
+    return out
+
+
+def _load_calibration() -> dict:
+    try:
+        res = _get_s3().get_object(Bucket=os.environ["DATA_BUCKET"],
+                                   Key="calibration.json")
+        doc = json.loads(res["Body"].read())
+        doc.setdefault("by_date", {})
+        return doc
+    except _get_s3().exceptions.NoSuchKey:
+        return {"by_date": {}}
 
 
 def _invalidate(date: str) -> str | None:

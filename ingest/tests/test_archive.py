@@ -36,6 +36,11 @@ SNAPSHOTS = {
                        {"num": Decimal(2), "name": "ベータ"}],
             "odds": [Decimal("1.5"), Decimal("6.0")],
         },
+        {
+            "pk": "RACE#20260726-mo-01", "sk": "RESULT",
+            "finish": [{"pos": Decimal(1), "num": Decimal(1)},
+                       {"pos": Decimal(2), "num": Decimal(2)}],
+        },
     ],
 }
 
@@ -89,7 +94,7 @@ def _body(fake, bucket, key):
 def test_run_writes_both_buckets_with_api_schema(monkeypatch):
     archive, fake = _setup(monkeypatch)
     result = archive.run("20260726")
-    assert result == {"date": "20260726", "races": 2, "days": 1}
+    assert result == {"date": "20260726", "races": 2, "days": 1, "calib_races": 1}
 
     for bucket, prefix in (("data-bkt", ""), ("front-bkt", "data/")):
         idx = _body(fake, bucket, f"{prefix}20260726/index.json")
@@ -185,3 +190,55 @@ def test_handler_skips_invalidation_when_no_races(monkeypatch):
     monkeypatch.setattr(archive, "jst_today", lambda: "20260728")
     archive.handler({"date": "20260726"}, None)
     assert calls == []  # 非開催日は無効化も不要
+
+
+# ---- 較正曲線（#53） ----
+
+def test_calibration_bins_basic():
+    from ingest.metrics import calibration_bins
+    # 2.0/4.0/8.0/8.0 → 支持率 0.5/0.25/0.125/0.125、勝ち馬 index=0
+    bins = calibration_bins([2.0, 4.0, 8.0, 8.0], 0)
+    total_n = sum(b["n"] for b in bins)
+    assert total_n == 4
+    assert sum(b["wins"] for b in bins) == 1
+    # 0.5 は最終ビン(0.5-1.0)に入り、そこに勝ち馬がいる
+    assert bins[-1]["n"] == 1 and bins[-1]["wins"] == 1
+
+
+def test_calibration_bins_none_on_dead_odds():
+    from ingest.metrics import calibration_bins
+    assert calibration_bins([None, None], None) is None
+
+
+def test_accumulate_calib_counts_winner(monkeypatch):
+    archive, _ = _setup(monkeypatch)
+    acc = archive._empty_calib()
+    race = {
+        "horses": [{"num": 1}, {"num": 2}, {"num": 3}],
+        "snapshots": [{"odds": [1.5, 5.0, 5.0]}],
+        "result": [{"pos": 1, "num": 1}, {"pos": 2, "num": 2}],
+    }
+    assert archive._accumulate_calib(acc, race) is True
+    assert sum(b["n"] for b in acc) == 3
+    assert sum(b["wins"] for b in acc) == 1
+
+
+def test_accumulate_calib_skips_no_result(monkeypatch):
+    archive, _ = _setup(monkeypatch)
+    acc = archive._empty_calib()
+    race = {"horses": [{"num": 1}], "snapshots": [{"odds": [2.0]}], "result": []}
+    assert archive._accumulate_calib(acc, race) is False
+    assert sum(b["n"] for b in acc) == 0
+
+
+def test_calibration_json_written_and_dedupes_by_date(monkeypatch):
+    archive, fake = _setup(monkeypatch)
+    archive.run("20260726")
+    doc = _body(fake, "data-bkt", "calibration.json")
+    assert doc["n_days"] == 1 and doc["n_races"] == 1
+    first_n = sum(b["n"] for b in doc["total"])
+    # 同じ日を再焼き → 二重計上せず総数が変わらない
+    archive.run("20260726")
+    doc2 = _body(fake, "data-bkt", "calibration.json")
+    assert doc2["n_days"] == 1
+    assert sum(b["n"] for b in doc2["total"]) == first_n
