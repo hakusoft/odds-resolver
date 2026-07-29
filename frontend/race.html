@@ -174,6 +174,10 @@
       <div class="legend-bar" id="legend-bar"></div>
       <span>高</span>
       <span style="margin-left:0.8rem">支持率</span>
+      <span id="surge-legend" hidden style="margin-left:1.2rem; display:inline-flex; align-items:center; gap:0.35rem">
+        <span style="width:12px; height:12px; border:2.5px solid var(--hot); border-radius:3px; display:inline-block"></span>
+        締切間際の支持率急上昇
+      </span>
     </div>
 
     <details>
@@ -268,6 +272,23 @@
       });
       const maxS = Math.max(...support.flat(), 1e-9);
 
+      // 急変（賢い金）の判定。定義は ingest/surge.py と揃える（#71/#73）:
+      // 締切間際 T-20 以降のスロットで、前スナップショットから支持率が
+      // +5pt 以上 上昇したセルを拾う。surged[i][j] = true。
+      const SURGE_MIN_SLOT = 20, SURGE_DELTA = 0.05;
+      const slotMin = s => {
+        const m = /^T-(\d+)$/.exec(s.slot || "");
+        return m ? Number(m[1]) : (s.slot === "F" ? 0 : null);
+      };
+      const surged = support.map(() => race.horses.map(() => false));
+      for (let i = 1; i < race.snapshots.length; i++) {
+        const mn = slotMin(race.snapshots[i]);
+        if (mn == null || mn > SURGE_MIN_SLOT) continue;
+        for (let j = 0; j < race.horses.length; j++) {
+          if (support[i][j] - support[i - 1][j] >= SURGE_DELTA) surged[i][j] = true;
+        }
+      }
+
       const posByNum = new Map((race.result || []).map(r => [r.num, r.pos]));
       const nH = race.horses.length, nT = race.snapshots.length;
       const w = LEFT + nT * (CELL_W + GAP) + (posByNum.size ? 44 : 0);
@@ -317,25 +338,36 @@
 
         race.snapshots.forEach((s, i) => {
           const t = support[i][j] / maxS;
+          const isSurge = surged[i][j];
+          const cx = LEFT + i * (CELL_W + GAP), cy = TOP + j * (CELL_H + GAP);
           const rect = document.createElementNS(svgNS, "rect");
-          rect.setAttribute("x", LEFT + i * (CELL_W + GAP));
-          rect.setAttribute("y", TOP + j * (CELL_H + GAP));
+          rect.setAttribute("x", cx);
+          rect.setAttribute("y", cy);
           rect.setAttribute("width", CELL_W);
           rect.setAttribute("height", CELL_H);
           rect.setAttribute("rx", 3);
           rect.setAttribute("fill", rampColor(t));
           rect.setAttribute("tabindex", "0");
+          if (isSurge) {
+            // 急変（賢い金）を hot 色の枠で強調。青いヒートマップと分離
+            rect.setAttribute("stroke", "var(--hot)");
+            rect.setAttribute("stroke-width", "2.5");
+          }
 
           const show = ev => {
-            rect.setAttribute("stroke", isDark(t) ? "#ffffff" : "#0b0b0b");
-            rect.setAttribute("stroke-width", "1.5");
+            rect.setAttribute("stroke", isSurge ? "var(--hot)"
+                              : (isDark(t) ? "#ffffff" : "#0b0b0b"));
+            rect.setAttribute("stroke-width", isSurge ? "2.5" : "1.5");
             tooltip.replaceChildren();
             const v = document.createElement("div");
             v.className = "val";
             v.textContent = s.odds[j] ? `${s.odds[j].toFixed(1)} 倍` : "オッズなし";
             const l = document.createElement("div");
             l.className = "lbl";
-            l.textContent = `${horse.num} ${horse.name} / ${s.time} / 支持率 ${(support[i][j] * 100).toFixed(1)}%`;
+            const up = isSurge
+              ? ` / 急上昇 +${((support[i][j] - support[i - 1][j]) * 100).toFixed(1)}pt`
+              : "";
+            l.textContent = `${horse.num} ${horse.name} / ${s.time} / 支持率 ${(support[i][j] * 100).toFixed(1)}%${up}`;
             tooltip.append(v, l);
             tooltip.style.opacity = "1";
             const px = ev.clientX ?? rect.getBoundingClientRect().x;
@@ -344,7 +376,12 @@
             tooltip.style.top = (py + 14) + "px";
           };
           const hide = () => {
-            rect.removeAttribute("stroke");
+            if (isSurge) {
+              rect.setAttribute("stroke", "var(--hot)");
+              rect.setAttribute("stroke-width", "2.5");
+            } else {
+              rect.removeAttribute("stroke");
+            }
             tooltip.style.opacity = "0";
           };
           rect.addEventListener("pointermove", show);
@@ -359,6 +396,9 @@
 
       document.getElementById("legend-bar").style.background =
         `linear-gradient(to right, ${RAMP[0]}, ${RAMP[6]}, ${RAMP[12]})`;
+
+      if (surged.some(row => row.some(Boolean)))
+        document.getElementById("surge-legend").hidden = false;
 
       const last = race.snapshots[nT - 1];
       const lastSupport = support[nT - 1];
