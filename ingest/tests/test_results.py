@@ -169,3 +169,55 @@ def test_decimalize_converts_floats(monkeypatch):
     assert out["a"] == Decimal("17.5")
     assert out["b"][0]["c"] == Decimal("3.5")
     assert out["d"] == 6 and out["e"] == "x"  # int/str は変えない
+
+
+def test_api_race_exposes_records_as_plain(monkeypatch):
+    """馬柱（#55）を露出し、Decimal を素の数値へ戻す。"""
+    monkeypatch.setenv("TABLE_NAME", "dummy")
+    import importlib
+    from ingest import api
+    importlib.reload(api)
+
+    def fake_query(pk, limit=None, desc=False, sk_prefix=None):
+        if pk.startswith("DAY#"):
+            return [{
+                "pk": "DAY#20260726", "sk": "RACE#20260726-ob-01",
+                "race_id": "20260726-ob-01", "venue": "帯広ば",
+                "race_no": Decimal(1), "post_time": "14:35", "name": "x",
+                "n_horses": Decimal(2), "surface": "ダ", "distance": Decimal(200),
+                "records": [
+                    {"num": Decimal(1), "name": "アルファ",
+                     "jockey_win_pct": Decimal("17.5"), "weight_carried": Decimal(570),
+                     "recent": [{"pos": Decimal(6), "field_size": Decimal(10)}]},
+                ],
+            }]
+        return []
+
+    monkeypatch.setattr(api, "_query", fake_query)
+    race = api._race("20260726-ob-01")
+    rec = race["records"][0]
+    assert rec["num"] == 1 and rec["name"] == "アルファ"
+    assert rec["jockey_win_pct"] == 17.5   # Decimal → float
+    assert rec["weight_carried"] == 570    # Decimal → int
+    assert rec["recent"][0]["pos"] == 6
+    # 型が素の数値に戻っている（JSON 化できる）
+    import json
+    json.dumps(race)
+
+
+def test_api_race_no_records_key_when_absent(monkeypatch):
+    monkeypatch.setenv("TABLE_NAME", "dummy")
+    import importlib
+    from ingest import api
+    importlib.reload(api)
+
+    def fake_query(pk, limit=None, desc=False, sk_prefix=None):
+        if pk.startswith("DAY#"):
+            return [{"pk": "DAY#20260726", "sk": "RACE#20260726-ob-01",
+                     "race_id": "20260726-ob-01", "venue": "帯広ば",
+                     "race_no": Decimal(1), "post_time": "14:35", "name": "x",
+                     "n_horses": Decimal(2), "surface": "ダ", "distance": Decimal(200)}]
+        return []
+
+    monkeypatch.setattr(api, "_query", fake_query)
+    assert "records" not in api._race("20260726-ob-01")  # 馬柱無しなら出さない

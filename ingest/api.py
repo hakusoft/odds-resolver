@@ -108,7 +108,23 @@ def _race(rid: str) -> dict:
     if result:
         out["result"] = [{"pos": int(f["pos"]), "num": int(f["num"])}
                          for f in result["finish"]]
+    if meta.get("records"):
+        # 馬柱（#55）。DynamoDB の Decimal を素の数値へ戻して露出する。
+        # archive は api の整形を共用するため、これで S3 view にも一緒に焼かれる
+        out["records"] = _plain(meta["records"])
     return out
+
+
+def _plain(obj):
+    """DynamoDB の Decimal を int/float へ戻す（JSON 化のため・#55）。"""
+    from decimal import Decimal
+    if isinstance(obj, Decimal):
+        return int(obj) if obj % 1 == 0 else float(obj)
+    if isinstance(obj, list):
+        return [_plain(x) for x in obj]
+    if isinstance(obj, dict):
+        return {k: _plain(v) for k, v in obj.items()}
+    return obj
 
 
 def _latest_metrics(rid: str):

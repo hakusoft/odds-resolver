@@ -13,6 +13,8 @@ DAY_ITEMS = [
         "race_id": "20260726-mo-01", "venue": "盛岡", "race_no": Decimal(1),
         "post_time": "12:25", "name": "テスト１", "n_horses": Decimal(2),
         "surface": "ダ", "distance": Decimal(1200),
+        "records": [{"num": Decimal(1), "name": "アルファ",
+                     "jockey_win_pct": Decimal("17.5")}],
     },
     {
         "pk": "DAY#20260726", "sk": "RACE#20260726-mo-02",
@@ -266,3 +268,13 @@ def test_calibration_json_written_and_dedupes_by_date(monkeypatch):
     doc2 = _body(fake, "data-bkt", "calibration.json")
     assert doc2["n_days"] == 1
     assert sum(b["n"] for b in doc2["total"]) == first_n
+
+
+def test_archive_bakes_horse_records_to_s3(monkeypatch):
+    """馬柱（#55）が race JSON に一緒に焼かれる。api の整形を共用するため。"""
+    archive, fake = _setup(monkeypatch)
+    archive.run("20260726")
+    for bucket, prefix in (("data-bkt", ""), ("front-bkt", "data/")):
+        race = _body(fake, bucket, f"{prefix}races/20260726-mo-01.json")
+        assert race["records"][0]["num"] == 1
+        assert race["records"][0]["jockey_win_pct"] == 17.5  # Decimal→float
