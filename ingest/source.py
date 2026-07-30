@@ -36,3 +36,9 @@ def odds_path(key: str) -> str:
 
 def result_path(key: str) -> str:
     return f"/race_performance/list/RACEID/{key}"
+
+
+def record_path(key: str) -> str:
+    # 馬柱は各レースの出馬表ページに載る（race_list と同じ URL 形だが、
+    # 会場代表ではなく各レースの key を渡す点が異なる・#55）
+    return f"/race_card/list/RACEID/{key}"
