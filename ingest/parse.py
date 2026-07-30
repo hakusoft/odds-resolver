@@ -185,3 +185,162 @@ def parse_result(html: str) -> list[dict] | None:
             finish.append({"pos": int(cells[i_pos]), "num": int(cells[i_num])})
         return finish or None
     return None
+
+
+# 馬柱（競走馬の素性・近走）を抜くための正規表現。会場に依存しない形で
+# 「あるものだけ拾う」。想定外のトークンは自然に無視される（#55）。
+_SEXAGE_RE = re.compile(r"([牡牝セせん騙]\d+)")
+_PCT_RE = re.compile(r"【\s*([\d.]+)\s*%\s*】")
+_DATE_RE = re.compile(r"(\d{2}\.\d{2}\.\d{2})")
+_POS_FIELD_RE = re.compile(r"^(\d+)\D*?(\d+)\s*頭")
+_DIST_RE = re.compile(r"(\d{3,4})\s*(ダ|芝)")
+_POP_RE = re.compile(r"(\d+)\s*人")
+_TIME_RE = re.compile(r"(\d{1,2}:\d{2}\.\d)")
+
+
+def parse_horse_records(html: str, venue: str) -> list[dict] | None:
+    """馬柱テーブルから各馬の素性・近走を返す（馬番昇順）。
+
+    研究（Benter 等）が重要とする近走成績・騎手勝率・斤量・性齢を中核に、
+    堅牢に抜けるものは全て拾う。会場（帯広ばんえい/通常競馬）に依存せず、
+    ヘッダー列名でインデックスを引き、値は正規表現で抜く。想定外の構造なら
+    None（呼び出し側で欠測扱い）。venue は将来の会場別対応のフックとして
+    受けるが、第一版のロジックでは使わない。
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    table = _find_record_table(soup)
+    if not table:
+        return None
+
+    rows = table.find_all("tr")
+    header = [c.get_text(" ", strip=True) for c in rows[0].find_all(["th", "td"])]
+    col = _record_columns(header)
+    if "num" not in col:
+        return None
+
+    records = []
+    for tr in rows[1:]:
+        cells = tr.find_all(["td", "th"])
+        if len(cells) <= col["num"]:
+            continue
+        num_txt = cells[col["num"]].get_text(strip=True)
+        if not re.match(r"^\d+$", num_txt):
+            continue
+        records.append(_parse_record_row(cells, col, num_txt))
+    if not records:
+        return None
+    records.sort(key=lambda r: r["num"])
+    return records
+
+
+def _find_record_table(soup):
+    for t in soup.find_all("table"):
+        txt = t.get_text(" ", strip=True)
+        if "騎手" in txt and "馬名" in txt and ("前5走" in txt or "前走" in txt):
+            return t
+    return None
+
+
+def _record_columns(header: list[str]) -> dict:
+    """ヘッダー文字列から列の役割 → インデックスを引く。
+
+    ヘッダーの「前5走…」は 1 列に集約されているが、データ行では近走が
+    複数列に分かれる。そこで profile 列（性齢・斤量・勝率を含む）と
+    近走の開始列（ヘッダーに「前5走」を含む列）だけをヘッダーから特定し、
+    近走の終端はデータ行側で「成績/全成績」列の手前まで、と決める。
+    """
+    col = {}
+    for i, h in enumerate(header):
+        h2 = h.replace(" ", "")
+        if h2 == "馬番":
+            col["num"] = i
+        elif "父馬" in h2 and "母馬" in h2:
+            col["pedigree"] = i
+        elif "性齢" in h2 and "騎手" in h2:
+            col["profile"] = i
+        elif "前5走" in h2 or "前５走" in h2:
+            col["recent_start"] = i
+        elif ("全成績" in h2 or h2 == "成績") and "recent_end" not in col:
+            col["recent_end"] = i  # 近走はこの列の手前まで
+    return col
+
+
+def _parse_record_row(cells, col: dict, num_txt: str) -> dict:
+    rec = {"num": int(num_txt)}
+    if "pedigree" in col:
+        parts = cells[col["pedigree"]].get_text("|", strip=True).split("|")
+        # 父馬 | 馬名 | 母馬 | ... の並び。馬名は2番目
+        if len(parts) >= 2:
+            rec["name"] = parts[1]
+        if len(parts) >= 1:
+            rec["sire"] = parts[0]
+        if len(parts) >= 3:
+            rec["dam"] = parts[2]
+    if "profile" in col:
+        _parse_profile(cells[col["profile"]], rec)
+    # 近走はヘッダーの colspan とデータ行の列数が食い違う（成績列が
+    # データ側で複数列に展開される）ため、位置でなく中身で判定する。
+    # 近走セルは必ず「N頭」と日付を持つ。それを満たすセルだけ拾う。
+    if "recent_start" in col:
+        recent = []
+        for c in cells[col["recent_start"]:]:
+            txt = c.get_text(" ", strip=True)
+            if "頭" not in txt or not _DATE_RE.search(txt):
+                continue
+            r = _parse_recent(c)
+            if r:
+                recent.append(r)
+        rec["recent"] = recent[:5]
+    return rec
+
+
+def _parse_profile(cell, rec: dict):
+    """性齢・毛色・斤量・騎手・勝率・3着内率・調教師を素性列から抜く。"""
+    txt = cell.get_text(" ", strip=True)
+    m = _SEXAGE_RE.search(txt)
+    if m:
+        rec["sex_age"] = m.group(1)
+    pcts = _PCT_RE.findall(txt)
+    if len(pcts) >= 2:
+        rec["jockey_win_pct"] = float(pcts[0])
+        rec["jockey_top3_pct"] = float(pcts[1])
+    # 斤量: 【】より前の 2-3 桁数字（性齢の後の最初の数字）
+    head = txt.split("【")[0]
+    mw = re.search(r"(\d{2,3})", head)
+    if mw:
+        rec["weight_carried"] = int(mw.group(1))
+    # 騎手名: 【】直前のトークン（毛色・斤量・数字を除いた最後の非数字語）
+    toks = [t for t in re.split(r"[\s（）]", head) if t]
+    names = [t for t in toks if not re.match(r"^\d+$", t)
+             and not _SEXAGE_RE.match(t)]
+    if len(names) >= 2:
+        rec["jockey"] = names[1]  # [毛色, 騎手] の並び
+
+
+def _parse_recent(cell) -> dict | None:
+    """近走1走分から着順・頭数・日付・距離・馬場・人気・タイムを抜く。"""
+    txt = cell.get_text(" ", strip=True)
+    if not txt or txt in ("-", "－"):
+        return None
+    r = {}
+    mp = _POS_FIELD_RE.match(txt)
+    if mp:
+        r["pos"] = int(mp.group(1))
+        r["field_size"] = int(mp.group(2))
+    md = _DATE_RE.search(txt)
+    if md:
+        r["date"] = md.group(1)
+    mdist = _DIST_RE.search(txt)
+    if mdist:
+        r["distance"] = int(mdist.group(1))
+        r["surface"] = mdist.group(2)
+    mpop = _POP_RE.search(txt)
+    if mpop:
+        r["popularity"] = int(mpop.group(1))
+    mt = _TIME_RE.search(txt)
+    if mt:
+        r["time"] = mt.group(1)
+    # 着順も日付も取れない = 実質空の走は含めない
+    if "pos" not in r and "date" not in r:
+        return None
+    return r
