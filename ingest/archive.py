@@ -21,7 +21,7 @@ import time
 import boto3
 
 from .api import _index, _race
-from .metrics import CALIB_BINS, calibration_bins
+from .metrics import CALIB_BINS, calibration_bins, classify_race
 from .surge import SURGE_DELTA, SURGE_MIN_SLOT, surged_mask
 
 # キャッシュ方針: 目次類は短く、確定レースは長く（deploy.yml と同方針）
@@ -52,11 +52,17 @@ def run(date: str | None = None) -> dict:
 
     day_calib = _empty_calib_set()
     n_scored = 0
+    classes = []  # 当日総括（#83）用の分類。追加クエリなしで同ループから
     for r in index["races"]:
         race = _race(r["race_id"])
         _put(f"races/{r['race_id']}.json", race, _CC_RACE)
         if _accumulate_calib(day_calib, race):
             n_scored += 1
+        c = classify_race(race)
+        if c is not None:
+            classes.append({"race_id": r["race_id"], "venue": r["venue"],
+                            "race_no": r["race_no"], **c})
+    index["summary"] = _summarize(classes)
     _put(f"{date}/index.json", index, _CC_DAY_INDEX)
 
     days = _update_days(index)
@@ -92,6 +98,32 @@ def _update_days(index: dict) -> list[dict]:
     days.sort(key=lambda d: d["date"], reverse=True)
     _put("days.json", {"days": days}, _CC_DAYS)
     return days
+
+
+def _summarize(classes: list[dict]) -> dict | None:
+    """分類済みレースから当日総括を作る（#83）。終わったレースが無ければ None。
+
+    件数と、導線用の波乱・急変的中レース、最も難しかったレース（ent 最大）を返す。
+    """
+    if not classes:
+        return None
+
+    def _brief(c):
+        return {"race_id": c["race_id"], "venue": c["venue"],
+                "race_no": c["race_no"], "ent": c["ent"]}
+
+    upsets = [_brief(c) for c in classes if c["upset"]]
+    surge_hits = [_brief(c) for c in classes if c["surge_hit"]]
+    hardest = max(classes, key=lambda c: c["ent"])
+    return {
+        "n_races": len(classes),
+        "firm": sum(1 for c in classes if c["firm"]),
+        "upset": len(upsets),
+        "surge_hit": len(surge_hits),
+        "upset_races": upsets,
+        "surge_hit_races": surge_hits,
+        "hardest": _brief(hardest),
+    }
 
 
 def _load_days() -> list[dict]:

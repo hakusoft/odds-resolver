@@ -239,6 +239,24 @@
       background-repeat: no-repeat;
     }
     .dateselect:hover { border-color: var(--accent); }
+    .report { padding: 0.4rem 0; }
+    .report h2 { font-size: 1rem; margin: 0 0 0.8rem; }
+    .report .prose { font-size: 0.95rem; line-height: 1.8; margin: 0 0 1.4rem; }
+    .report .stats { display: flex; flex-wrap: wrap; gap: 1.4rem; margin-bottom: 1.2rem; }
+    .report .stat { display: flex; flex-direction: column; }
+    .report .stat b { font-size: 1.5rem; font-family: var(--font-mono); color: var(--text-primary); }
+    .report .stat .lbl { font-size: 0.8rem; color: var(--text-secondary); }
+    .report .group { margin-bottom: 1rem; }
+    .report .group .head { font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.45rem; }
+    .report .chips { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    .report .chip {
+      display: inline-flex; align-items: baseline; gap: 0.35rem;
+      padding: 0.35rem 0.7rem; border: 1px solid var(--border); border-radius: 8px;
+      text-decoration: none; color: var(--text-primary); font-size: 0.85rem;
+    }
+    .report .chip:hover { border-color: var(--accent); }
+    .report .chip .sub { font-size: 0.75rem; color: var(--text-secondary); font-family: var(--font-mono); }
+    .tab.report-tab { margin-left: auto; }
     .dateselect:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
     .hero {
@@ -480,6 +498,8 @@
     let days = [];
     let currentDate = null;   // "2026-07-24"
     let byVenue = new Map();
+    let currentSummary = null;
+    const REPORT_TAB = "__report__";
     let venues = [];
 
     function setHash(date, venue) {
@@ -499,6 +519,11 @@
         btn.setAttribute("aria-selected", String(btn.dataset.venue === venue));
       }
       setHash(currentDate, venue);
+
+      if (venue === REPORT_TAB) {
+        renderReport(currentSummary);
+        return;
+      }
 
       const races = byVenue.get(venue) || [];
       const panel = document.getElementById("races");
@@ -750,6 +775,68 @@
       return promise;
     }
 
+    function summaryProse(s) {
+      const n = s.n_races, up = s.upset, firm = s.firm;
+      const upsetRate = up / n;
+      let tone;
+      if (upsetRate >= 0.28) tone = "波乱の目立つ荒れた一日";
+      else if (upsetRate <= 0.12) tone = "順当な決着が続いた堅い一日";
+      else tone = "堅い決着と波乱が入り混じった一日";
+
+      const parts = [`${s.n_races}レースを振り返ると、${tone}でした。`];
+      parts.push(`1番人気が上位に残ったレースが${firm}、`
+        + `人気薄が勝つ波乱が${up}ありました。`);
+      if (s.surge_hit)
+        parts.push(`締切間際にオッズが急変した馬は、${s.surge_hit}レースで上位に絡んでいます。`);
+      if (s.hardest)
+        parts.push(`最も混戦だったのは${s.hardest.venue}${s.hardest.race_no}Rでした。`);
+      return parts.join("");
+    }
+
+    function renderReport(s) {
+      const panel = document.getElementById("races");
+      panel.innerHTML = "";
+      const wrap = document.createElement("div");
+      wrap.className = "report";
+      if (!s || !s.n_races) {
+        const p = document.createElement("p");
+        p.className = "empty";
+        p.textContent = "この日のレポートはまだありません（全レース終了後に作成）。";
+        panel.appendChild(p);
+        return;
+      }
+      wrap.innerHTML = `<h2>この日の総括</h2>`;
+      const p = document.createElement("p");
+      p.className = "prose";
+      p.textContent = summaryProse(s);
+      wrap.appendChild(p);
+
+      const chip = r => {
+        const a = document.createElement("a");
+        a.className = "chip";
+        a.href = `race.html?id=${encodeURIComponent(r.race_id)}`;
+        a.innerHTML = `${r.venue}${r.race_no}R`
+          + (r.ent != null ? ` <span class="sub">混戦${r.ent.toFixed(2)}</span>` : "");
+        return a;
+      };
+      const group = (title, races) => {
+        if (!races || !races.length) return;
+        const g = document.createElement("div");
+        g.className = "group";
+        const h = document.createElement("div");
+        h.className = "head"; h.textContent = title;
+        const chips = document.createElement("div");
+        chips.className = "chips";
+        races.forEach(r => chips.appendChild(chip(r)));
+        g.append(h, chips);
+        wrap.appendChild(g);
+      };
+      group("波乱のレース（人気薄が勝利）", s.upset_races);
+      group("急変が的中したレース（締切間際に動いた馬が上位に）", s.surge_hit_races);
+      if (s.hardest) group("最も難しかったレース（混戦度が最大）", [s.hardest]);
+      panel.appendChild(wrap);
+    }
+
     async function selectDate(date, wantVenue) {
       const day = days.find(d => d.date === date);
       const idx = day ? await fetchDayIndex(day) : null;
@@ -760,6 +847,8 @@
       const i = days.findIndex(d => d.date === date);
       document.getElementById("prevDay").disabled = i >= days.length - 1;
       document.getElementById("nextDay").disabled = i <= 0;
+
+      currentSummary = idx.summary || null;
 
       byVenue = new Map();
       for (const r of idx.races) {
@@ -786,6 +875,18 @@
         btn.append(label, cnt);
         btn.addEventListener("click", () => selectVenue(venue));
         tabs.appendChild(btn);
+      }
+      // 全レース終了後（summary あり）のみレポートタブを右端に置く
+      if (currentSummary && currentSummary.n_races) {
+        const rbtn = document.createElement("button");
+        rbtn.className = "tab report-tab";
+        rbtn.type = "button";
+        rbtn.setAttribute("role", "tab");
+        rbtn.dataset.venue = REPORT_TAB;
+        rbtn.setAttribute("aria-selected", "false");
+        rbtn.textContent = "レポート";
+        rbtn.addEventListener("click", () => selectVenue(REPORT_TAB));
+        tabs.appendChild(rbtn);
       }
 
       const venue = venues.includes(wantVenue) ? wantVenue : venues[0];
