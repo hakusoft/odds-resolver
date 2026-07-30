@@ -278,3 +278,46 @@ def test_archive_bakes_horse_records_to_s3(monkeypatch):
         race = _body(fake, bucket, f"{prefix}races/20260726-mo-01.json")
         assert race["records"][0]["num"] == 1
         assert race["records"][0]["jockey_win_pct"] == 17.5  # Decimal→float
+
+
+# ---- 当日総括レポート（#83） ----
+
+def test_classify_race_firm():
+    from ingest.metrics import classify_race
+    # 1番人気(num1,支持率高)が1着 = 堅い
+    race = {
+        "horses": [{"num": 1, "name": "ア"}, {"num": 2, "name": "イ"}],
+        "snapshots": [{"odds": [1.5, 6.0]}],
+        "result": [{"pos": 1, "num": 1}, {"pos": 2, "num": 2}],
+    }
+    c = classify_race(race)
+    assert c["firm"] is True and c["upset"] is False
+
+
+def test_classify_race_upset():
+    from ingest.metrics import classify_race
+    # 支持率の低い num3 が1着・1番人気 num1 は着外 = 純粋な波乱
+    race = {
+        "horses": [{"num": 1}, {"num": 2}, {"num": 3}, {"num": 4}],
+        "snapshots": [{"odds": [1.3, 5.0, 50.0, 8.0]}],  # num3 の支持率 <10%
+        "result": [{"pos": 1, "num": 3}, {"pos": 2, "num": 2},
+                   {"pos": 3, "num": 4}, {"pos": 4, "num": 1}],
+    }
+    c = classify_race(race)
+    assert c["upset"] is True and c["firm"] is False  # 1番人気 num1 は4着
+
+
+def test_classify_race_none_without_result():
+    from ingest.metrics import classify_race
+    assert classify_race({"snapshots": [{"odds": [2.0]}]}) is None
+
+
+def test_summary_in_index(monkeypatch):
+    archive, fake = _setup(monkeypatch)
+    archive.run("20260726")
+    for bucket, prefix in (("data-bkt", ""), ("front-bkt", "data/")):
+        idx = _body(fake, bucket, f"{prefix}20260726/index.json")
+        s = idx["summary"]
+        # mo-01 は着順あり(1番人気1着=堅い)、mo-02 は着順なし
+        assert s["n_races"] == 1 and s["firm"] == 1
+        assert "hardest" in s

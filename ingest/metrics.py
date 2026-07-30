@@ -59,3 +59,54 @@ def _bin_index(support: float) -> int:
         if CALIB_BINS[b] <= support < CALIB_BINS[b + 1]:
             return b
     return len(CALIB_BINS) - 2  # ちょうど 1.0 は最終ビンへ
+
+
+# 当日総括レポート（#83）の分類閾値。仮置きで実測調整の余地あり。
+FIRM_TOP1 = 0.40       # 1番人気の支持率がこれ以上 = 堅い決着になりやすい
+UPSET_SUPPORT = 0.10   # 勝ち馬の支持率がこれ未満 = 波乱（人気薄が勝利）
+HARD_ENT = 0.85        # 混戦度 ent がこれ以上 = 難しいレース
+
+
+def classify_race(race: dict) -> dict | None:
+    """1 レースの詳細（最終オッズ・着順・急変）から当日総括用の分類を返す。
+
+    {firm, upset, surge_hit, top1, ent, winner_support}。着順が無い
+    （まだ終わっていない）レースは None。当日データだけで完結する。
+    """
+    result = race.get("result")
+    snaps = race.get("snapshots")
+    if not result or not snaps:
+        return None
+    odds = snaps[-1]["odds"]
+    m = support_metrics(odds)
+    if m is None:
+        return None
+    top1, ent = m
+    inv = [(1.0 / o if o else 0.0) for o in odds]
+    s = sum(inv)
+    support = [x / s for x in inv]  # 馬番順の支持率
+
+    winner_num = next((r["num"] for r in result if r["pos"] == 1), None)
+    horses = race.get("horses") or []
+    w_idx = next((i for i, h in enumerate(horses) if h["num"] == winner_num), None)
+    winner_support = support[w_idx] if w_idx is not None and w_idx < len(support) else None
+
+    # 1 番人気（支持率最大の馬番）が 3 着内か
+    fav_idx = max(range(len(support)), key=lambda i: support[i]) if support else None
+    fav_num = horses[fav_idx]["num"] if fav_idx is not None and fav_idx < len(horses) else None
+    top3 = {r["num"] for r in result if r["pos"] <= 3}
+    firm = fav_num in top3 if fav_num is not None else False
+
+    upset = winner_support is not None and winner_support < UPSET_SUPPORT
+
+    # 急変した馬が 3 着内に来たか（賢い金の的中）
+    from .surge import surged_mask
+    mask = surged_mask(snaps, len(horses))
+    surged_nums = {horses[i]["num"] for i in range(len(horses)) if i < len(mask) and mask[i]}
+    surge_hit = bool(surged_nums & top3)
+
+    return {
+        "firm": firm, "upset": upset, "surge_hit": surge_hit,
+        "top1": round(top1, 3), "ent": round(ent, 3),
+        "winner_support": round(winner_support, 3) if winner_support is not None else None,
+    }
