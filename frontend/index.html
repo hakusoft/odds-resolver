@@ -763,7 +763,10 @@
       const promise = (async () => {
         const dir = day.date.replaceAll("-", "");
         const url = day.src === "api" ? `api/?date=${dir}` : `data/${dir}/index.json`;
-        const res = await fetch(url);
+        // 日別 index は当日オッズ指標や総括（#83）が日中に更新される。
+        // ブラウザ HTTP キャッシュが古い版を握ると総括タブが出ない等の
+        // 不整合が起きるため、常にサーバーの最新を読む
+        const res = await fetch(url, { cache: "no-store" });
         if (!res.ok) return null;
         const ct = res.headers.get("content-type") || "";
         if (!ct.includes("json")) return null;
@@ -906,7 +909,7 @@
     }
 
     async function main() {
-      const res = await fetch("data/days.json").catch(() => null);
+      const res = await fetch("data/days.json", { cache: "no-store" }).catch(() => null);
       const ct = res?.headers.get("content-type") || "";
       days = res?.ok && ct.includes("json") ? (await res.json()).days || [] : [];
 
