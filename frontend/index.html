@@ -787,7 +787,7 @@
       parts.push(`1番人気が上位に残ったレースが${firm}、`
         + `人気薄が勝つ波乱が${up}ありました。`);
       if (s.surge_hit)
-        parts.push(`締切間際に支持を集めた"賢い金"は、${s.surge_hit}レースで上位に絡んでいます。`);
+        parts.push(`締切間際にオッズが急変した馬は、${s.surge_hit}レースで上位に絡んでいます。`);
       if (s.hardest)
         parts.push(`最も混戦だったのは${s.hardest.venue}${s.hardest.race_no}Rでした。`);
       return parts.join("");
@@ -832,7 +832,7 @@
         wrap.appendChild(g);
       };
       group("波乱のレース（人気薄が勝利）", s.upset_races);
-      group("急変が的中したレース（賢い金が上位に）", s.surge_hit_races);
+      group("急変が的中したレース（締切間際に動いた馬が上位に）", s.surge_hit_races);
       if (s.hardest) group("最も難しかったレース（混戦度が最大）", [s.hardest]);
       panel.appendChild(wrap);
     }
