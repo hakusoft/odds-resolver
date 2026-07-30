@@ -275,7 +275,7 @@
       // 急変（賢い金）の判定。定義は ingest/surge.py と揃える（#71/#73）:
       // 締切間際 T-20 以降のスロットで、前スナップショットから支持率が
       // +5pt 以上 上昇したセルを拾う。surged[i][j] = true。
-      const SURGE_MIN_SLOT = 20, SURGE_DELTA = 0.05;
+      const SURGE_MIN_SLOT = 20, SURGE_DELTA = 0.08;  // ingest/surge.py と揃える（#23）
       const slotMin = s => {
         const m = /^T-(\d+)$/.exec(s.slot || "");
         return m ? Number(m[1]) : (s.slot === "F" ? 0 : null);
