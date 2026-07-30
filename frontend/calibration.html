@@ -99,6 +99,14 @@
     <table id="table" hidden></table>
     <p class="meta" id="meta"></p>
 
+    <section id="surge-section" hidden style="margin-top:2rem">
+      <h2>急変あり／なしの対比</h2>
+      <p class="sub">締切間際に支持率が急上昇した馬（<span id="surge-thresh"></span>）と、そうでない馬を、
+        同じ支持率帯で比べる。急変ありの実勝率・回収率が高ければ「賢い金」が情報を含む兆候。
+        標本が少ない帯は誤差が大きいので、収束を待つ。</p>
+      <table id="surge-table"></table>
+    </section>
+
     <footer>
       各点は支持率帯にまとめた集計で、標本が少ない帯は誤差が大きい。
       オッズは取得時点の参考値で、的中・回収を保証しない。馬券の購入は20歳から。 © 2026 OddsResolver
@@ -242,6 +250,49 @@
       const m = document.getElementById("meta");
       m.textContent = `集計期間: ${doc.n_days || 0} 日 / ${doc.n_races || 0} レース。`
         + "標本が増えるほど各点の位置は安定する。";
+
+      if (doc.by_surge) buildSurge(doc.by_surge, doc.surge_threshold);
+    }
+
+    function buildSurge(bySurge, thresh) {
+      const surged = bySurge.surged || [], calm = bySurge.calm || [];
+      if (!surged.some(b => b.n > 0)) return;  // 急変データが無ければ出さない
+      document.getElementById("surge-section").hidden = false;
+      if (thresh) document.getElementById("surge-thresh").textContent =
+        `T-${thresh.min_slot} 以降・支持率 +${Math.round(thresh.delta*100)}pt 上昇`;
+
+      const table = document.getElementById("surge-table");
+      const head = document.createElement("thead");
+      const hr = document.createElement("tr");
+      ["支持率帯", "区分", "頭数", "実勝率", "回収率"].forEach(h => {
+        const th = document.createElement("th"); th.textContent = h; hr.appendChild(th);
+      });
+      head.appendChild(hr);
+      const body = document.createElement("tbody");
+      for (let i = 0; i < surged.length; i++) {
+        const s = surged[i], c = calm[i];
+        if (!s || (s.n === 0 && (!c || c.n === 0))) continue;
+        const band = `${Math.round(s.lo*100)}–${Math.round(s.hi*100)}%`;
+        for (const [name, b, isSurge] of [["急変あり", s, true], ["急変なし", c, false]]) {
+          if (!b || b.n === 0) continue;
+          const tr = document.createElement("tr");
+          // 回収率 100% 超 = 控除率の壁を超える妙味の芽。pos 色で示す
+          const payCls = "num " + (b.payback != null && b.payback >= 1 ? "pos" : "");
+          const cells = [
+            [isSurge ? band : "", ""],
+            [name, isSurge ? "" : ""],
+            [String(b.n), "num"],
+            [`${(b.win_rate*100).toFixed(1)}%`, "num"],
+            [b.payback != null ? `${Math.round(b.payback*100)}%` : "—", payCls],
+          ];
+          for (const [txt, cls] of cells) {
+            const td = document.createElement("td");
+            td.textContent = txt; if (cls) td.className = cls; tr.appendChild(td);
+          }
+          body.appendChild(tr);
+        }
+      }
+      table.append(head, body);
     }
 
     function buildTable(bins) {

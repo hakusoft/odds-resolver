@@ -47,3 +47,40 @@ def detect_surges(prev_odds: list | None, curr_odds: list,
                 "delta": round(delta, 3),
             })
     return out
+
+
+def _slot_minutes(slot: str | None) -> int | None:
+    """スロットラベル（T-N / F）から発走までの残り分を復元する。"""
+    if not slot:
+        return None
+    if slot == "F":
+        return 0
+    if slot.startswith("T-"):
+        try:
+            return int(slot[2:])
+        except ValueError:
+            return None
+    return None
+
+
+def surged_mask(snapshots: list, n_horses: int) -> list[bool]:
+    """レースの全スナップショットから、各馬が一度でも急変したかを返す。
+
+    分析（#76）と可視化（#73）が同じ定義を使うための集約関数。
+    スナップショットには slot ラベルが要る。頭数が食い違う時点は飛ばす。
+    """
+    mask = [False] * n_horses
+    for i in range(1, len(snapshots)):
+        mn = _slot_minutes(snapshots[i].get("slot"))
+        if mn is None or mn > SURGE_MIN_SLOT:
+            continue
+        prev = _support(snapshots[i - 1]["odds"])
+        curr = _support(snapshots[i]["odds"])
+        if prev is None or curr is None:
+            continue
+        if len(prev) != n_horses or len(curr) != n_horses:
+            continue
+        for j in range(n_horses):
+            if curr[j] - prev[j] >= SURGE_DELTA:
+                mask[j] = True
+    return mask
