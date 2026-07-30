@@ -22,6 +22,7 @@ import boto3
 
 from .api import _index, _race
 from .metrics import CALIB_BINS, calibration_bins
+from .surge import SURGE_DELTA, SURGE_MIN_SLOT, surged_mask
 
 # キャッシュ方針: 目次類は短く、確定レースは長く（deploy.yml と同方針）
 _CC_DAYS = "public, max-age=60"
@@ -49,7 +50,7 @@ def run(date: str | None = None) -> dict:
     except KeyError:
         return {"date": date, "races": 0, "note": "no races"}
 
-    day_calib = _empty_calib()
+    day_calib = _empty_calib_set()
     n_scored = 0
     for r in index["races"]:
         race = _race(r["race_id"])
@@ -106,13 +107,27 @@ def _load_days() -> list[dict]:
 # 寄与（by_date）を保持し、再焼き（着順の後追い反映）で同じ日を上書き
 # しても二重計上しない。全期間の集計は by_date の総和で組み立てる。
 
-def _empty_calib() -> list[dict]:
-    return [{"n": 0, "sum_support": 0.0, "wins": 0}
+# 較正は 3 系統を並行して積む: 全馬(total) / 急変あり(surged) / 急変なし(calm)。
+# kaz の仮説「不人気 × 急変は妙味か」を、同じ支持率帯で急変有無を対比して
+# 測るため（#76）。系統はこのキー順で固定する。
+_CALIB_SETS = ("total", "surged", "calm")
+
+
+def _empty_bins() -> list[dict]:
+    return [{"n": 0, "sum_support": 0.0, "wins": 0, "payback": 0.0}
             for _ in range(len(CALIB_BINS) - 1)]
 
 
-def _accumulate_calib(acc: list[dict], race: dict) -> bool:
-    """レース詳細から (支持率, 勝敗) を acc に足す。着順が無ければ False。"""
+def _empty_calib_set() -> dict:
+    return {k: _empty_bins() for k in _CALIB_SETS}
+
+
+def _accumulate_calib(acc: dict, race: dict) -> bool:
+    """レース詳細から全馬/急変あり/急変なしの較正を acc に足す。
+
+    着順・オッズが無ければ False。急変判定は surge.py を全スナップ
+    ショットに適用（可視化 #73 と同じ定義）。
+    """
     if not race.get("result") or not race.get("snapshots"):
         return False
     odds = race["snapshots"][-1]["odds"]
@@ -121,28 +136,46 @@ def _accumulate_calib(acc: list[dict], race: dict) -> bool:
         return False
     winner_idx = next((i for i, h in enumerate(race["horses"])
                        if h["num"] == winner_num), None)
-    bins = calibration_bins(odds, winner_idx)
-    if bins is None:
-        return False
-    for a, b in zip(acc, bins):
-        a["n"] += b["n"]
-        a["sum_support"] += b["sum_support"]
-        a["wins"] += b["wins"]
+    nh = len(race["horses"])
+    mask = surged_mask(race["snapshots"], nh)
+    masks = {
+        "total": None,
+        "surged": mask,
+        "calm": [not m for m in mask],
+    }
+    computed = {}
+    for k in _CALIB_SETS:
+        bins = calibration_bins(odds, winner_idx, masks[k])
+        if bins is None:
+            return False
+        computed[k] = bins
+    for k in _CALIB_SETS:
+        for a, b in zip(acc[k], computed[k]):
+            a["n"] += b["n"]
+            a["sum_support"] += b["sum_support"]
+            a["wins"] += b["wins"]
+            a["payback"] += b["payback"]
     return True
 
 
-def _update_calibration(date: str, day_calib: list[dict], n_races: int):
+def _update_calibration(date: str, day_calib: dict, n_races: int):
     doc = _load_calibration()
     # 再焼きで同日を上書きしても二重計上しないよう、日別に置き換える
-    doc["by_date"][date] = {"races": n_races, "bins": day_calib}
-    total = _empty_calib()
+    doc["by_date"][date] = {"races": n_races, "sets": day_calib}
+    total = _empty_calib_set()
     for entry in doc["by_date"].values():
-        for t, b in zip(total, entry["bins"]):
-            t["n"] += b["n"]
-            t["sum_support"] += b["sum_support"]
-            t["wins"] += b["wins"]
+        sets = entry.get("sets") or {"total": entry.get("bins", _empty_bins())}
+        for k in _CALIB_SETS:
+            for t, b in zip(total[k], sets.get(k, _empty_bins())):
+                t["n"] += b["n"]
+                t["sum_support"] += b["sum_support"]
+                t["wins"] += b["wins"]
+                t["payback"] += b.get("payback", 0.0)
     doc["bin_edges"] = CALIB_BINS
-    doc["total"] = _finalize_bins(total)
+    doc["total"] = _finalize_bins(total["total"])
+    doc["by_surge"] = {"surged": _finalize_bins(total["surged"]),
+                       "calm": _finalize_bins(total["calm"])}
+    doc["surge_threshold"] = {"min_slot": SURGE_MIN_SLOT, "delta": SURGE_DELTA}
     doc["n_days"] = len(doc["by_date"])
     doc["n_races"] = sum(e["races"] for e in doc["by_date"].values())
     # 毎日更新される累積ファイルなので目次類と同じ短キャッシュにする
@@ -150,7 +183,7 @@ def _update_calibration(date: str, day_calib: list[dict], n_races: int):
 
 
 def _finalize_bins(total: list[dict]) -> list[dict]:
-    """集計から表示用の (平均支持率, 実勝率) を付ける。"""
+    """集計から表示用の (平均支持率, 実勝率, 回収率) を付ける。"""
     out = []
     for i, b in enumerate(total):
         n = b["n"]
@@ -158,6 +191,7 @@ def _finalize_bins(total: list[dict]) -> list[dict]:
             "lo": CALIB_BINS[i], "hi": CALIB_BINS[i + 1], "n": n,
             "mean_support": round(b["sum_support"] / n, 4) if n else None,
             "win_rate": round(b["wins"] / n, 4) if n else None,
+            "payback": round(b["payback"] / n, 4) if n else None,
             "wins": b["wins"],
         })
     return out

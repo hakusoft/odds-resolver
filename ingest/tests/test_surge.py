@@ -90,3 +90,21 @@ def test_publish_noop_without_topic(monkeypatch):
     f._publish_surges({"venue": "x", "race_no": Decimal(1), "post_time": "12:00"},
                       [{"num": 1, "name": "ア", "prev": 0.1, "curr": 0.2, "delta": 0.1}],
                       8)
+
+
+def test_surged_mask_from_snapshots():
+    from ingest.surge import surged_mask
+    snaps = [
+        {"slot": "T-45", "odds": [2.0, 10.0, 10.0]},
+        {"slot": "T-8", "odds": [2.0, 3.0, 10.0]},  # 2番が急上昇
+    ]
+    assert surged_mask(snaps, 3) == [False, True, False]
+
+
+def test_surged_mask_ignores_far_slots():
+    from ingest.surge import surged_mask
+    snaps = [
+        {"slot": "T-45", "odds": [2.0, 10.0, 10.0]},
+        {"slot": "T-30", "odds": [2.0, 3.0, 10.0]},  # T-30 は締切間際でない
+    ]
+    assert surged_mask(snaps, 3) == [False, False, False]

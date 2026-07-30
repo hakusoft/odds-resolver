@@ -23,27 +23,34 @@ def support_metrics(odds: list) -> tuple[float, float] | None:
 CALIB_BINS = [0.0, 0.05, 0.10, 0.15, 0.20, 0.30, 0.50, 1.0001]
 
 
-def calibration_bins(odds: list, winner_idx: int | None) -> list[dict] | None:
+def calibration_bins(odds: list, winner_idx: int | None,
+                     mask: list[bool] | None = None) -> list[dict] | None:
     """確定オッズ列と勝ち馬の index から、支持率ビンごとの寄与を返す。
 
-    返り値は各ビンの {n, sum_support, wins}。全期間で単純加算すると
-    「そのビンに入った馬の頭数・支持率の合計・実際に勝った数」になり、
-    平均支持率 = sum_support/n（大衆の予想勝率）と 実勝率 = wins/n を
-    突き合わせれば較正のズレが出る。オッズが全滅なら None。
+    返り値は各ビンの {n, sum_support, wins, payback}。全期間で単純加算
+    すると「そのビンの頭数・支持率の合計・勝った数・単勝回収（勝った
+    馬のオッズ合計）」になる。平均支持率 = sum_support/n（大衆の予想
+    勝率）・実勝率 = wins/n・回収率 = payback/n を突き合わせれば較正の
+    ズレと妙味が出る。mask を渡すと True の馬だけ集計する（急変あり/なし
+    の切り分け・#76）。オッズが全滅なら None。
     """
     inv = [(1.0 / float(o) if o else 0.0) for o in odds]
     s = sum(inv)
     if s <= 0:
         return None
-    bins = [{"n": 0, "sum_support": 0.0, "wins": 0}
+    bins = [{"n": 0, "sum_support": 0.0, "wins": 0, "payback": 0.0}
             for _ in range(len(CALIB_BINS) - 1)]
     for i, x in enumerate(inv):
+        if mask is not None and not mask[i]:
+            continue
         sup = x / s
         b = _bin_index(sup)
         bins[b]["n"] += 1
         bins[b]["sum_support"] += sup
         if i == winner_idx:
             bins[b]["wins"] += 1
+            if odds[i]:
+                bins[b]["payback"] += float(odds[i])
     return bins
 
 

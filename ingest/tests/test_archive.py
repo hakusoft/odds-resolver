@@ -212,23 +212,47 @@ def test_calibration_bins_none_on_dead_odds():
 
 def test_accumulate_calib_counts_winner(monkeypatch):
     archive, _ = _setup(monkeypatch)
-    acc = archive._empty_calib()
+    acc = archive._empty_calib_set()
     race = {
         "horses": [{"num": 1}, {"num": 2}, {"num": 3}],
         "snapshots": [{"odds": [1.5, 5.0, 5.0]}],
         "result": [{"pos": 1, "num": 1}, {"pos": 2, "num": 2}],
     }
     assert archive._accumulate_calib(acc, race) is True
-    assert sum(b["n"] for b in acc) == 3
-    assert sum(b["wins"] for b in acc) == 1
+    assert sum(b["n"] for b in acc["total"]) == 3
+    assert sum(b["wins"] for b in acc["total"]) == 1
 
 
 def test_accumulate_calib_skips_no_result(monkeypatch):
     archive, _ = _setup(monkeypatch)
-    acc = archive._empty_calib()
+    acc = archive._empty_calib_set()
     race = {"horses": [{"num": 1}], "snapshots": [{"odds": [2.0]}], "result": []}
     assert archive._accumulate_calib(acc, race) is False
-    assert sum(b["n"] for b in acc) == 0
+    assert sum(b["n"] for b in acc["total"]) == 0
+
+
+def test_accumulate_calib_splits_by_surge(monkeypatch):
+    archive, _ = _setup(monkeypatch)
+    acc = archive._empty_calib_set()
+    # 2番が T-8 で支持率を +8pt 以上 急上昇（10→3 でオッズ半減以上）して勝つ
+    race = {
+        "horses": [{"num": 1}, {"num": 2}, {"num": 3}],
+        "snapshots": [
+            {"slot": "T-45", "odds": [2.0, 10.0, 10.0]},
+            {"slot": "T-8", "odds": [2.0, 3.0, 10.0]},
+        ],
+        "result": [{"pos": 1, "num": 2}, {"pos": 2, "num": 1}],
+    }
+    assert archive._accumulate_calib(acc, race) is True
+    # 全馬 3、急変あり 1（2番）、急変なし 2（1・3番）
+    assert sum(b["n"] for b in acc["total"]) == 3
+    assert sum(b["n"] for b in acc["surged"]) == 1
+    assert sum(b["n"] for b in acc["calm"]) == 2
+    # 勝ったのは急変した 2番 → surged に wins が入り calm には入らない
+    assert sum(b["wins"] for b in acc["surged"]) == 1
+    assert sum(b["wins"] for b in acc["calm"]) == 0
+    # 単勝回収は surged 側に勝ち馬のオッズ（3.0）が入る
+    assert sum(b["payback"] for b in acc["surged"]) == 3.0
 
 
 def test_calibration_json_written_and_dedupes_by_date(monkeypatch):
