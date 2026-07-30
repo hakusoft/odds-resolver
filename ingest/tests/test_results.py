@@ -142,3 +142,30 @@ def test_index_survives_result_only_race(monkeypatch):
     idx = api._index("20260726")
     assert len(idx["races"]) == 1
     assert "top1" not in idx["races"][0]  # 指標なしで静かにスキップ
+
+
+def test_pick_record_prefers_untaken_in_post_order(monkeypatch):
+    f = _fetch(monkeypatch)
+    now = f._post_epoch("20260728", "3:00")  # 朝の窓
+    races = [
+        {"race_id": "r2", "post_time": "12:20", "source_key": "k2"},
+        {"race_id": "r1", "post_time": "11:45", "source_key": "k1"},
+        {"race_id": "r3", "post_time": "12:55", "source_key": "k3", "record_ok": True},
+    ]
+    assert f._pick_record(now, races)["race_id"] == "r1"  # 発走順・取得済みは飛ばす
+
+
+def test_pick_record_closed_after_sales_open(monkeypatch):
+    f = _fetch(monkeypatch)
+    now = f._post_epoch("20260728", "10:30")  # 発売開始後は馬柱を取らない
+    races = [{"race_id": "r", "post_time": "11:45", "source_key": "k"}]
+    assert f._pick_record(now, races) is None
+
+
+def test_decimalize_converts_floats(monkeypatch):
+    from decimal import Decimal
+    f = _fetch(monkeypatch)
+    out = f._decimalize({"a": 17.5, "b": [{"c": 3.5}], "d": 6, "e": "x"})
+    assert out["a"] == Decimal("17.5")
+    assert out["b"][0]["c"] == Decimal("3.5")
+    assert out["d"] == 6 and out["e"] == "x"  # int/str は変えない

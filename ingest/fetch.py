@@ -26,7 +26,7 @@ from boto3.dynamodb.conditions import Key
 
 from . import source
 from .metrics import support_metrics
-from .parse import parse_odds, parse_result
+from .parse import parse_horse_records, parse_odds, parse_result
 from .surge import detect_surges
 
 _TABLE = boto3.resource("dynamodb").Table(os.environ["TABLE_NAME"])
@@ -176,6 +176,52 @@ def _pick_result(now: float) -> dict | None:
     return None
 
 
+def _pick_record(now: float, races: list[dict]) -> dict | None:
+    """当日レースで馬柱が未取得のものを発走順に 1 つ返す（朝の窓限定）。"""
+    if jst_hour(now) >= _BASELINE_START_HOUR:
+        return None
+    cands = []
+    for r in races:
+        if r.get("record_ok") or not r.get("source_key"):
+            continue
+        last = r.get("record_attempt")
+        if last is not None and now - float(last) < _ATTEMPT_COOLDOWN_SEC:
+            continue
+        cands.append(r)
+    return min(cands, key=lambda r: r["post_time"]) if cands else None
+
+
+def _run_record(now: float, date: str, races: list[dict]) -> dict | None:
+    """朝の窓の空きで、当日レースの馬柱を 1 レース取得する。無ければ None。"""
+    race = _pick_record(now, races)
+    if race is None:
+        return None
+    html = source.fetch(source.record_path(race["source_key"]))
+    records = parse_horse_records(html, race["venue"])
+    if records is None:
+        _record_attempt(race, now, attr="record_attempt")
+        return {"date": date, "picked": race["race_id"], "note": "record parse failed"}
+    # スナップショット側の horses（出走馬 num/name）と役割が違うので
+    # 馬柱は records で持つ（衝突回避・#55）
+    race["records"] = _decimalize(records)
+    race["record_ok"] = True
+    race.pop("record_attempt", None)
+    _TABLE.put_item(Item=race)
+    return {"date": date, "picked": race["race_id"], "record": len(records)}
+
+
+def _decimalize(obj):
+    """馬柱の float（勝率など）を DynamoDB 用に Decimal へ再帰変換する。"""
+    from decimal import Decimal
+    if isinstance(obj, float):
+        return Decimal(str(obj))
+    if isinstance(obj, list):
+        return [_decimalize(x) for x in obj]
+    if isinstance(obj, dict):
+        return {k: _decimalize(v) for k, v in obj.items()}
+    return obj
+
+
 def _run_result(now: float, date: str) -> dict:
     """オッズの仕事が無い分の空きで、前日結果を 1 レース回収する。"""
     race = _pick_result(now)
@@ -201,7 +247,9 @@ def run(now: float | None = None) -> dict:
 
     picked = _pick(now, races) if races else None
     if picked is None:
-        return _run_result(now, date)
+        # 朝の窓の空き時間。当日の馬柱を先に揃え（10:00 のオッズ開始まで
+        # に欲しい）、無ければ前日の着順を回収する（#55 / #52）
+        return _run_record(now, date, races) or _run_result(now, date)
     race, slot, is_final = picked
 
     key = race.get("source_key")
