@@ -22,7 +22,8 @@ import boto3
 
 from .api import _index, _race
 from .metrics import CALIB_BINS, calibration_bins, classify_race
-from .surge import SURGE_DELTA, SURGE_MIN_SLOT, surged_mask
+from .surge import (LATE_WINDOW, SURGE_DELTA, SURGE_MIN_SLOT, early_mask,
+                    late_mask, persist_mask, revert_mask, surged_mask)
 
 # キャッシュ方針: 目次類は短く、確定レースは長く（deploy.yml と同方針）
 _CC_DAYS = "public, max-age=60"
@@ -139,10 +140,22 @@ def _load_days() -> list[dict]:
 # 寄与（by_date）を保持し、再焼き（着順の後追い反映）で同じ日を上書き
 # しても二重計上しない。全期間の集計は by_date の総和で組み立てる。
 
-# 較正は 3 系統を並行して積む: 全馬(total) / 急変あり(surged) / 急変なし(calm)。
-# kaz の仮説「不人気 × 急変は妙味か」を、同じ支持率帯で急変有無を対比して
-# 測るため（#76）。系統はこのキー順で固定する。
-_CALIB_SETS = ("total", "surged", "calm")
+# 較正は 7 系統を並行して積む。系統はこのキー順で固定する。
+#
+#   total / surged / calm            … 全馬 / 急変あり / 急変なし（#76）
+#   persist / revert                 … 急変を「持続」と「平均回帰」に割る（#88）
+#   late / early                     … 急変を「締切5分以内」と「それ以前」に割る（#87）
+#
+# kaz の仮説「不人気 × 急変は妙味か」を同じ支持率帯で対比するのが出発点（#76）。
+# そこへ 2 本の独立な軸を足した。persist/revert は arXiv:2402.02623 を逆に読んだ
+# もの（情報なら跳ねは残り、一時的な大口なら戻る）、late/early は arXiv:2509.14645
+# の "final-five-minute" を切るもの。**両者は独立**で交差しうる（早く跳ねて持続、
+# 直前に跳ねて回帰、等）。それぞれ surged の内側を排他に二分する。
+#
+# 帯別に積むのは論文の "similar final odds" と同じ発想で、人気の効果と
+# 経路の効果を分離するため。単純比較すると持続組は支持率が構造的に高くなる。
+_CALIB_SETS = ("total", "surged", "calm",
+               "persist", "revert", "late", "early")
 
 
 def _empty_bins() -> list[dict]:
@@ -169,11 +182,16 @@ def _accumulate_calib(acc: dict, race: dict) -> bool:
     winner_idx = next((i for i, h in enumerate(race["horses"])
                        if h["num"] == winner_num), None)
     nh = len(race["horses"])
-    mask = surged_mask(race["snapshots"], nh)
+    snaps = race["snapshots"]
+    mask = surged_mask(snaps, nh)
     masks = {
         "total": None,
         "surged": mask,
         "calm": [not m for m in mask],
+        "persist": persist_mask(snaps, nh),
+        "revert": revert_mask(snaps, nh),
+        "late": late_mask(snaps, nh),
+        "early": early_mask(snaps, nh),
     }
     computed = {}
     for k in _CALIB_SETS:
@@ -207,7 +225,27 @@ def _update_calibration(date: str, day_calib: dict, n_races: int):
     doc["total"] = _finalize_bins(total["total"])
     doc["by_surge"] = {"surged": _finalize_bins(total["surged"]),
                        "calm": _finalize_bins(total["calm"])}
-    doc["surge_threshold"] = {"min_slot": SURGE_MIN_SLOT, "delta": SURGE_DELTA}
+    # 急変の内訳。持続/回帰（#88）と 直前/それ以前（#87）は独立な軸で、
+    # それぞれ surged を排他に二分する。
+    #
+    # **分母の期間が total/surged/calm とズレる**点に注意。by_date は日別の
+    # 集計値だけを持ち生レースを残さないので、この機能より前に焼いた日
+    # （7/25〜7/31）は新キーが 0 のまま埋まらない。遡って埋めるには当該日を
+    # 再焼き（archive を date 指定で再実行）する必要がある。読む側が誤解
+    # しないよう since に開始日を出す。
+    # 新軸を実際に持つ最初の日。この日より前は 0 なので、by_persistence /
+    # by_timing の分母は total と揃わない。読む側はここを見て期間を合わせる。
+    detailed = sorted(d for d, e in doc["by_date"].items()
+                      if "persist" in (e.get("sets") or {}))
+    since = detailed[0] if detailed else None
+    doc["by_persistence"] = {"persist": _finalize_bins(total["persist"]),
+                             "revert": _finalize_bins(total["revert"]),
+                             "since": since}
+    doc["by_timing"] = {"late": _finalize_bins(total["late"]),
+                        "early": _finalize_bins(total["early"]),
+                        "since": since}
+    doc["surge_threshold"] = {"min_slot": SURGE_MIN_SLOT, "delta": SURGE_DELTA,
+                              "late_window": LATE_WINDOW}
     doc["n_days"] = len(doc["by_date"])
     doc["n_races"] = sum(e["races"] for e in doc["by_date"].values())
     # 毎日更新される累積ファイルなので目次類と同じ短キャッシュにする
