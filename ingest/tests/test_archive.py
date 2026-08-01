@@ -334,6 +334,73 @@ def test_since_is_none_when_only_legacy_days(monkeypatch):
     assert out["by_persistence"]["since"] is None
 
 
+def test_place_bins_uses_win_support_and_top3(monkeypatch):
+    """複勝は単勝支持率でビンを切り、3着以内を hits に数える（#89）。"""
+    from ingest.metrics import place_bins
+    # 単勝 2.0/4.0/8.0/8.0 → 支持率 0.5/0.25/0.125/0.125
+    odds = [2.0, 4.0, 8.0, 8.0]
+    place = [{"lo": 1.1, "hi": 1.4}, {"lo": 1.6, "hi": 2.2},
+             {"lo": 3.0, "hi": 5.0}, {"lo": 3.2, "hi": 5.4}]
+    bins = place_bins(odds, place, top3_idx={0, 1, 2})
+    assert sum(b["n"] for b in bins) == 4
+    assert sum(b["hits"] for b in bins) == 3
+    # 回収は下限で積む（安全側）。1.1 + 1.6 + 3.0
+    assert abs(sum(b["payback"] for b in bins) - 5.7) < 1e-9
+    # 支持率 0.5 の馬は最終ビンに入り、3着内なので hits も立つ
+    assert bins[-1]["n"] == 1 and bins[-1]["hits"] == 1
+
+
+def test_place_bins_skips_horses_without_place(monkeypatch):
+    """複勝が取れていない馬は分母にも入れない。"""
+    from ingest.metrics import place_bins
+    odds = [2.0, 4.0, 8.0, 8.0]
+    place = [{"lo": 1.1, "hi": 1.4}, None, None, {"lo": 3.2, "hi": 5.4}]
+    bins = place_bins(odds, place, top3_idx={0, 1})
+    assert sum(b["n"] for b in bins) == 2       # None の 2 頭は除外
+    assert sum(b["hits"] for b in bins) == 1    # 3着内は 1番のみ（2番は除外済み）
+
+
+def test_accumulate_calib_adds_place_when_present(monkeypatch):
+    archive, _ = _setup(monkeypatch)
+    acc = archive._empty_calib_set()
+    race = {
+        "horses": [{"num": 1}, {"num": 2}, {"num": 3}, {"num": 4}],
+        "snapshots": [
+            {"slot": "T-45", "odds": [2.0, 4.0, 8.0, 8.0],
+             "place": [{"lo": 1.1, "hi": 1.4}, {"lo": 1.6, "hi": 2.2},
+                       {"lo": 3.0, "hi": 5.0}, {"lo": 3.2, "hi": 5.4}]},
+        ],
+        "result": [{"pos": 1, "num": 1}, {"pos": 2, "num": 2}, {"pos": 3, "num": 3}],
+    }
+    assert archive._accumulate_calib(acc, race) is True
+    assert sum(b["n"] for b in acc["place"]["total"]) == 4
+    assert sum(b["hits"] for b in acc["place"]["total"]) == 3
+    # 単勝側も従来どおり積まれている（1着は1番のみ）
+    assert sum(b["wins"] for b in acc["total"]) == 1
+
+
+def test_accumulate_calib_without_place_is_noop(monkeypatch):
+    """複勝を取り始める前のレースでも壊れず、place は空のまま。"""
+    archive, _ = _setup(monkeypatch)
+    acc = archive._empty_calib_set()
+    race = {
+        "horses": [{"num": 1}, {"num": 2}],
+        "snapshots": [{"slot": "T-45", "odds": [2.0, 4.0]}],
+        "result": [{"pos": 1, "num": 1}],
+    }
+    assert archive._accumulate_calib(acc, race) is True
+    assert sum(b["n"] for b in acc["place"]["total"]) == 0
+    assert sum(b["n"] for b in acc["total"]) == 2
+
+
+def test_calibration_doc_omits_place_before_any_data(monkeypatch):
+    """複勝が1日も無ければ place キー自体を出さない（0 を実績と誤読させない）。"""
+    archive, fake = _setup(monkeypatch)
+    archive.run("20260726")
+    doc = _body(fake, "data-bkt", "calibration.json")
+    assert "place" not in doc
+
+
 def test_recalc_rebuilds_calibration_from_s3(monkeypatch):
     """TTL 切れでも S3 の races/*.json から較正を積み直せる（#69）。"""
     archive, fake = _setup(monkeypatch)

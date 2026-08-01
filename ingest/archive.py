@@ -21,7 +21,7 @@ import time
 import boto3
 
 from .api import _index, _race
-from .metrics import CALIB_BINS, calibration_bins, classify_race
+from .metrics import (CALIB_BINS, calibration_bins, classify_race, place_bins)
 from .surge import (LATE_WINDOW, SURGE_DELTA, SURGE_MIN_SLOT, early_mask,
                     late_mask, persist_mask, revert_mask, surged_mask)
 
@@ -202,14 +202,27 @@ def _load_days() -> list[dict]:
 _CALIB_SETS = ("total", "surged", "calm",
                "persist", "revert", "late", "early")
 
+# 複勝（#89）は全馬 / 急変あり / 急変なし の 3 系統だけ積む。持続・回帰や
+# 直前・それ以前まで割ると 1 セルが 1 桁になり読めないため、まず粗く見る。
+# 標本が貯まってから細分するかを判断する
+_PLACE_SETS = ("total", "surged", "calm")
+
 
 def _empty_bins() -> list[dict]:
     return [{"n": 0, "sum_support": 0.0, "wins": 0, "payback": 0.0}
             for _ in range(len(CALIB_BINS) - 1)]
 
 
+def _empty_place_bins() -> list[dict]:
+    # 単勝は wins（1着）、複勝は hits（3着以内）。名前を分けて取り違えを防ぐ
+    return [{"n": 0, "sum_support": 0.0, "hits": 0, "payback": 0.0}
+            for _ in range(len(CALIB_BINS) - 1)]
+
+
 def _empty_calib_set() -> dict:
-    return {k: _empty_bins() for k in _CALIB_SETS}
+    acc = {k: _empty_bins() for k in _CALIB_SETS}
+    acc["place"] = {k: _empty_place_bins() for k in _PLACE_SETS}
+    return acc
 
 
 def _accumulate_calib(acc: dict, race: dict) -> bool:
@@ -250,7 +263,31 @@ def _accumulate_calib(acc: dict, race: dict) -> bool:
             a["sum_support"] += b["sum_support"]
             a["wins"] += b["wins"]
             a["payback"] += b["payback"]
+
+    # 複勝の較正（#89）。複勝を取り始める前のレースには place が無いので、
+    # 有る時だけ積む。単勝側とは母数が別（place が欠けた馬は入らない）
+    _accumulate_place(acc, race, odds, masks)
     return True
+
+
+def _accumulate_place(acc: dict, race: dict, odds: list, masks: dict):
+    """3 着以内の較正を acc["place"] に足す。place が無ければ何もしない。"""
+    snap = race["snapshots"][-1]
+    place = snap.get("place")
+    if not place or not any(p for p in place):
+        return
+    top3_nums = {r["num"] for r in race["result"] if r["pos"] <= 3}
+    top3_idx = {i for i, h in enumerate(race["horses"])
+                if h["num"] in top3_nums}
+    for k in _PLACE_SETS:
+        bins = place_bins(odds, place, top3_idx, masks[k])
+        if bins is None:
+            return
+        for a, b in zip(acc["place"][k], bins):
+            a["n"] += b["n"]
+            a["sum_support"] += b["sum_support"]
+            a["hits"] += b["hits"]
+            a["payback"] += b["payback"]
 
 
 def _update_calibration(date: str, day_calib: dict, n_races: int):
@@ -265,6 +302,16 @@ def _update_calibration(date: str, day_calib: dict, n_races: int):
                 t["n"] += b["n"]
                 t["sum_support"] += b["sum_support"]
                 t["wins"] += b["wins"]
+                t["payback"] += b.get("payback", 0.0)
+        # 複勝（#89）。取り始める前の日は place を持たないので素通りする
+        for k in _PLACE_SETS:
+            src = (sets.get("place") or {}).get(k)
+            if not src:
+                continue
+            for t, b in zip(total["place"][k], src):
+                t["n"] += b["n"]
+                t["sum_support"] += b["sum_support"]
+                t["hits"] += b["hits"]
                 t["payback"] += b.get("payback", 0.0)
     doc["bin_edges"] = CALIB_BINS
     doc["total"] = _finalize_bins(total["total"])
@@ -287,12 +334,44 @@ def _update_calibration(date: str, day_calib: dict, n_races: int):
     doc["by_timing"] = {"late": _finalize_bins(total["late"]),
                         "early": _finalize_bins(total["early"]),
                         "since": since}
+    # 複勝（#89）。横軸は単勝支持率のまま、成績だけ 3 着以内に差し替えたもの。
+    # 複勝を取り始めた日より前は集計されないので、ここも since を出す
+    # 「place キーがある」ではなく「実際に頭数が入っている」で判定する。
+    # _empty_calib_set は常に place を作るので、キーの有無では空の日も
+    # 拾ってしまい、複勝ゼロ件でも place が出てしまう
+    with_place = sorted(
+        d for d, e in doc["by_date"].items()
+        if any(b["n"] for k, bins in ((e.get("sets") or {}).get("place") or {}).items()
+               for b in bins)
+    )
+    if with_place:
+        doc["place"] = {k: _finalize_place(total["place"][k]) for k in _PLACE_SETS}
+        doc["place"]["since"] = with_place[0]
     doc["surge_threshold"] = {"min_slot": SURGE_MIN_SLOT, "delta": SURGE_DELTA,
                               "late_window": LATE_WINDOW}
     doc["n_days"] = len(doc["by_date"])
     doc["n_races"] = sum(e["races"] for e in doc["by_date"].values())
     # 毎日更新される累積ファイルなので目次類と同じ短キャッシュにする
     _put("calibration.json", doc, _CC_DAYS)
+
+
+def _finalize_place(total: list[dict]) -> list[dict]:
+    """複勝の集計に (平均支持率, 3着内率, 回収率) を付ける（#89）。
+
+    place_rate は「単勝でこの支持率だった馬が 3 着以内に来た割合」。
+    payback は複勝オッズ下限で積んだ安全側の回収率。
+    """
+    out = []
+    for i, b in enumerate(total):
+        n = b["n"]
+        out.append({
+            "lo": CALIB_BINS[i], "hi": CALIB_BINS[i + 1], "n": n,
+            "mean_support": round(b["sum_support"] / n, 4) if n else None,
+            "place_rate": round(b["hits"] / n, 4) if n else None,
+            "payback": round(b["payback"] / n, 4) if n else None,
+            "hits": b["hits"],
+        })
+    return out
 
 
 def _finalize_bins(total: list[dict]) -> list[dict]:

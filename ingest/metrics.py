@@ -54,6 +54,47 @@ def calibration_bins(odds: list, winner_idx: int | None,
     return bins
 
 
+def place_bins(odds: list, place: list, top3_idx: set,
+               mask: list[bool] | None = None) -> list[dict] | None:
+    """複勝の較正（#89）。ビン分けは**単勝の支持率**のまま、成績を複勝に差し替える。
+
+    返り値は各ビンの {n, sum_support, hits, payback}。hits は 3 着以内に
+    来た数、payback は的中馬の複勝オッズ（下限）の合計。
+
+    ビンを単勝支持率で切るのは、複勝オッズから支持率を作ると分母が壊れる
+    ため。3 着以内は 1 レースで 3 頭当たるので、複勝オッズの逆数和は単勝の
+    約 3 倍になり（実データで 3.46 倍を確認）、単勝と同じ「確率」の意味を
+    持たない。「大衆が単勝でこう評価した馬が、実際どれだけ 3 着以内に
+    来たか」を測るのが目的なので、横軸は単勝支持率で揃える。
+
+    payback に複勝オッズの**下限**を使うのは安全側に倒すため。複勝は他の
+    着順の組み合わせで確定値が下限〜上限の間に決まるが、どれになるかは
+    保存していない。下限で積めば回収率を過大評価しない。
+
+    place に None が混じる馬（取得できなかった・発売前）は集計から外す。
+    単勝オッズが全滅なら None。
+    """
+    inv = [(1.0 / float(o) if o else 0.0) for o in odds]
+    s = sum(inv)
+    if s <= 0:
+        return None
+    bins = [{"n": 0, "sum_support": 0.0, "hits": 0, "payback": 0.0}
+            for _ in range(len(CALIB_BINS) - 1)]
+    for i, x in enumerate(inv):
+        if mask is not None and not mask[i]:
+            continue
+        if i >= len(place) or place[i] is None:
+            continue          # 複勝が取れていない馬は分母にも入れない
+        sup = x / s
+        b = _bin_index(sup)
+        bins[b]["n"] += 1
+        bins[b]["sum_support"] += sup
+        if i in top3_idx:
+            bins[b]["hits"] += 1
+            bins[b]["payback"] += float(place[i]["lo"])
+    return bins
+
+
 def _bin_index(support: float) -> int:
     for b in range(len(CALIB_BINS) - 1):
         if CALIB_BINS[b] <= support < CALIB_BINS[b + 1]:
