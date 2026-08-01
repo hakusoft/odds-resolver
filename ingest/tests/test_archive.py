@@ -257,6 +257,71 @@ def test_accumulate_calib_splits_by_surge(monkeypatch):
     assert sum(b["payback"] for b in acc["surged"]) == 3.0
 
 
+def test_accumulate_calib_splits_by_persistence_and_timing(monkeypatch):
+    """急変を 持続/回帰（#88）と 直前/それ以前（#87）に割って積む。
+
+    2 軸は独立なので、同じ 1 頭が persist と early に同時に入りうる。
+    """
+    archive, _ = _setup(monkeypatch)
+    acc = archive._empty_calib_set()
+
+    def field(second, n=8, base=8.0):
+        o = [base] * n
+        o[1] = second
+        return o
+
+    # 2番が T-15（5分より前）に急変し、そのまま持続して勝つ
+    race = {
+        "horses": [{"num": i + 1} for i in range(8)],
+        "snapshots": [
+            {"slot": "T-20", "odds": field(8.0)},
+            {"slot": "T-15", "odds": field(2.0)},
+            {"slot": "F", "odds": field(2.0)},
+        ],
+        "result": [{"pos": 1, "num": 2}],
+    }
+    assert archive._accumulate_calib(acc, race) is True
+    assert sum(b["n"] for b in acc["surged"]) == 1
+    # 持続 = 1 / 回帰 = 0
+    assert sum(b["n"] for b in acc["persist"]) == 1
+    assert sum(b["n"] for b in acc["revert"]) == 0
+    # 直前 = 0 / それ以前 = 1（T-15 は 5 分より前）
+    assert sum(b["n"] for b in acc["late"]) == 0
+    assert sum(b["n"] for b in acc["early"]) == 1
+    # 勝ちと回収は該当する両方の系統に入る（軸が独立なので二重ではない）
+    assert sum(b["wins"] for b in acc["persist"]) == 1
+    assert sum(b["wins"] for b in acc["early"]) == 1
+
+
+def test_calibration_doc_exposes_new_axes(monkeypatch):
+    """calibration.json に by_persistence / by_timing が出る（後方互換）。"""
+    archive, fake = _setup(monkeypatch)
+    archive.run("20260726")
+    doc = _body(fake, "data-bkt", "calibration.json")
+    # 既存キーは残っている
+    assert "total" in doc and "by_surge" in doc
+    # 新キーが増えている
+    assert set(doc["by_persistence"]) == {"persist", "revert", "since"}
+    assert set(doc["by_timing"]) == {"late", "early", "since"}
+    # 分母の期間が total とズレるので、開始日を明示する
+    assert doc["by_persistence"]["since"] == "20260726"
+    assert doc["by_timing"]["since"] == "20260726"
+    # 閾値の記録に窓が載る（後から定義を追える）
+    assert doc["surge_threshold"]["late_window"] == 5
+
+
+def test_since_is_none_when_only_legacy_days(monkeypatch):
+    """新軸を持たない日しかなければ since は None（0 を実績と誤読させない）。"""
+    archive, fake = _setup(monkeypatch)
+    doc = {"by_date": {"20260701": {"races": 10, "sets": {
+        "total": archive._empty_bins(), "surged": archive._empty_bins(),
+        "calm": archive._empty_bins()}}}}
+    monkeypatch.setattr(archive, "_load_calibration", lambda: doc)
+    archive._update_calibration("20260701", doc["by_date"]["20260701"]["sets"], 10)
+    out = _body(fake, "data-bkt", "calibration.json")
+    assert out["by_persistence"]["since"] is None
+
+
 def test_calibration_json_written_and_dedupes_by_date(monkeypatch):
     archive, fake = _setup(monkeypatch)
     archive.run("20260726")
