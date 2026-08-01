@@ -118,9 +118,31 @@ def _parse_row(cells: list[str], col: dict) -> dict | None:
     }
 
 
+def _parse_place(cell: str) -> dict | None:
+    """複勝オッズのセルを {lo, hi} に読む（#89）。
+
+    複勝は他の着順の組み合わせで配当が動くため、取得元は単一値ではなく
+    「2.2-4.4」のような**範囲**で出す。単勝と同じ float 列には収まらない。
+    発売直後は「0.0-0.0」になりうるので、単勝と同じく 0 は「まだ無い」= None。
+    """
+    m = re.match(r"^([\d.]+)\s*-\s*([\d.]+)$", cell)
+    if not m:
+        return None
+    lo, hi = float(m.group(1)), float(m.group(2))
+    if not lo or not hi:
+        return None
+    return {"lo": lo, "hi": hi}
+
+
 def parse_odds(html: str) -> dict | None:
-    """オッズページから馬(num,name)と単勝オッズを返す。
-    {horses:[{num,name}], odds:[float|None]}。想定外の構造なら None。
+    """オッズページから馬(num,name)と単勝・複勝オッズを返す。
+
+    {horses:[{num,name}], odds:[float|None], place:[{lo,hi}|None]}。
+    想定外の構造なら None。
+
+    複勝は同じページの同じ表に載っており**追加リクエストは不要**（#89）。
+    ただし範囲なので odds とは別の列として持つ。複勝列が無いページ形でも
+    壊れないよう、place は取れた時だけ埋める（取れなければ全て None）。
     """
     soup = BeautifulSoup(html, "html.parser")
     table = None
@@ -136,10 +158,11 @@ def parse_odds(html: str) -> dict | None:
     i_num = col.get("馬番")
     i_name = col.get("馬名")
     i_odds = col.get("単勝オッズ")
+    i_place = col.get("複勝オッズ")
     if i_num is None or i_name is None or i_odds is None:
         return None
 
-    horses, odds = [], []
+    horses, odds, place = [], [], []
     for tr in table.find_all("tr")[1:]:
         cells = [c.get_text(strip=True) for c in tr.find_all(["td", "th"])]
         if len(cells) <= max(i_num, i_name, i_odds):
@@ -153,12 +176,15 @@ def parse_odds(html: str) -> dict | None:
         # 存在しない値なので「まだ無い」= None に落とす
         v = float(mo.group(1)) if mo else None
         odds.append(v if v else None)
+        place.append(_parse_place(cells[i_place])
+                     if i_place is not None and len(cells) > i_place else None)
     if not horses:
         return None
     order = sorted(range(len(horses)), key=lambda k: horses[k]["num"])
     return {
         "horses": [horses[k] for k in order],
         "odds": [odds[k] for k in order],
+        "place": [place[k] for k in order],
     }
 
 
