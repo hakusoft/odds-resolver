@@ -85,27 +85,41 @@
       <button class="theme-btn" id="themetoggle" type="button"></button>
     </div>
 
-    <h2>支持率の較正</h2>
-    <p class="sub">横軸 = 大衆の予想勝率（支持率 = 1/オッズ の正規化）、縦軸 = 実際の勝率。
-      点が対角線より<strong>上なら大衆が過小評価（妙味）</strong>、下なら過大評価。</p>
+    <h2>急変は儲かるか</h2>
+    <p class="sub">締切間際に支持率が急上昇した馬（<span id="surge-thresh"></span>）と、
+      そうでない馬を<strong>同じ支持率帯で</strong>比べる。帯を揃えるのは、急変した馬が
+      人気になるのは当然で、そのままでは「人気だから勝つ」と区別できないため。
+      縦軸は<strong>回収率</strong>（単勝を買い続けた時の払い戻し）。</p>
 
     <p id="status">読み込み中…</p>
-    <div class="chart-wrap"><div id="chart"></div></div>
+    <div class="chart-wrap"><div id="surge-chart"></div></div>
     <div class="legend" id="legend" hidden>
-      <span><span class="swatch" style="background:var(--accent)"></span>実勝率 &gt; 予想（過小評価）</span>
-      <span><span class="swatch" style="background:var(--hot)"></span>実勝率 &lt; 予想（過大評価）</span>
+      <span><span class="swatch" style="background:var(--accent)"></span>急変あり</span>
+      <span><span class="swatch" style="background:var(--text-secondary)"></span>急変なし</span>
+      <span>破線 = 回収率 100%（控除率の壁）</span>
     </div>
+    <table id="surge-table"></table>
 
-    <table id="table" hidden></table>
-    <p class="meta" id="meta"></p>
-
-    <section id="surge-section" hidden style="margin-top:2rem">
-      <h2>急変あり／なしの対比</h2>
-      <p class="sub">締切間際に支持率が急上昇した馬（<span id="surge-thresh"></span>）と、そうでない馬を、
-        同じ支持率帯で比べる。急変ありの実勝率・回収率が高ければ「賢い金」が情報を含む兆候。
-        標本が少ない帯は誤差が大きいので、収束を待つ。</p>
-      <table id="surge-table"></table>
+    <section id="axes-section" hidden style="margin-top:2.5rem">
+      <h2>急変の内訳</h2>
+      <p class="sub">急変を 2 つの独立した軸で割る。<strong>持続/回帰</strong>は跳ねた後に
+        高止まりしたか元へ戻ったか、<strong>直前/それ以前</strong>は締切
+        <span id="late-window"></span>分以内に起きたか。どちらも急変した馬だけが対象で、
+        母数は上の「急変あり」と一致する。</p>
+      <div id="axes-table"></div>
+      <p class="meta" id="axes-note"></p>
     </section>
+
+    <section style="margin-top:2.5rem">
+      <h2>支持率の較正</h2>
+      <p class="sub">横軸 = 大衆の予想勝率（支持率 = 1/オッズ の正規化）、縦軸 = 実際の勝率。
+        点が対角線より<strong>上なら大衆が過小評価</strong>、下なら過大評価。
+        全馬をまとめた土台の図で、市場がどれだけ正確かを見る。</p>
+      <div class="chart-wrap"><div id="chart"></div></div>
+      <table id="table" hidden></table>
+    </section>
+
+    <p class="meta" id="meta"></p>
 
     <footer>
       各点は支持率帯にまとめた集計で、標本が少ない帯は誤差が大きい。
@@ -135,10 +149,24 @@
       document.documentElement.dataset.theme = next;
       localStorage.setItem("theme", next);
       paintTheme();
+      // SVG は描画時の CSS 変数を属性に焼き込むため、テーマを変えても
+      // 色が追従しない。図だけ捨てて描き直す（表は CSS 変数で追従する）
+      redrawCharts();
     });
 
     const PAD = 48, SIZE = 420;
     const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+    let LOADED = null;   // テーマ切替で図を描き直すために保持する
+
+    function redrawCharts() {
+      if (!LOADED) return;
+      for (const id of ["surge-chart", "chart"]) {
+        const el = document.getElementById(id);
+        if (el) el.replaceChildren();
+      }
+      if (LOADED.by_surge) drawSurgeChart(LOADED.by_surge);
+      drawCalibChart(LOADED);
+    }
 
     function render(doc) {
       const bins = (doc.total || []).filter(b => b.n > 0 && b.mean_support != null);
@@ -147,7 +175,18 @@
         return;
       }
       document.getElementById("status").hidden = true;
-      document.getElementById("legend").hidden = false;
+      // 主役は急変の対比。凡例は急変チャートのもの
+      if (doc.by_surge) document.getElementById("legend").hidden = false;
+      drawCalibChart(doc);
+      buildTable(bins);
+      const m = document.getElementById("meta");
+      m.textContent = `集計期間: ${doc.n_days || 0} 日 / ${doc.n_races || 0} レース。`
+        + "標本が増えるほど各点の位置は安定する。";
+    }
+
+    function drawCalibChart(doc) {
+      const bins = (doc.total || []).filter(b => b.n > 0 && b.mean_support != null);
+      if (!bins.length) return;
 
       const svgNS = "http://www.w3.org/2000/svg";
       const svg = document.createElementNS(svgNS, "svg");
@@ -246,20 +285,120 @@
       svg.appendChild(yl);
 
       document.getElementById("chart").appendChild(svg);
-      buildTable(bins);
-      const m = document.getElementById("meta");
-      m.textContent = `集計期間: ${doc.n_days || 0} 日 / ${doc.n_races || 0} レース。`
-        + "標本が増えるほど各点の位置は安定する。";
+    }
 
-      if (doc.by_surge) buildSurge(doc.by_surge, doc.surge_threshold);
+    // 標本が少ない帯は誤差が大きい。読み手が「差がある」と誤読しないよう、
+    // この頭数を下回るセルは薄く描き、表にも印を付ける
+    const MIN_N = 20;
+
+    function drawSurgeChart(bySurge) {
+      const surged = bySurge.surged || [], calm = bySurge.calm || [];
+      const idx = [];
+      for (let i = 0; i < surged.length; i++) {
+        const s = surged[i], c = calm[i];
+        if ((s && s.n) || (c && c.n)) idx.push(i);
+      }
+      if (!idx.length) return;
+
+      const svgNS = "http://www.w3.org/2000/svg";
+      const L = 46, R = 12, T = 12, B = 52;
+      const bw = 58, gap = 26;                       // 帯ごとの幅と間隔
+      const plotW = idx.length * (bw + gap);
+      const plotH = 260;
+      const W = L + plotW + R, H = T + plotH + B;
+      const svg = document.createElementNS(svgNS, "svg");
+      svg.setAttribute("width", W); svg.setAttribute("height", H);
+      svg.setAttribute("role", "img");
+      svg.setAttribute("aria-label", "支持率帯ごとの回収率（急変あり/なし）");
+
+      // 上限は実データの最大値に合わせるが、100% は必ず入るようにする
+      const vals = idx.flatMap(i => [surged[i], calm[i]])
+        .filter(b => b && b.n && b.payback != null).map(b => b.payback);
+      const maxV = Math.max(1.25, ...vals) * 1.05;
+      const y = v => T + plotH - (v / maxV) * plotH;
+
+      for (const tk of [0, 0.5, 1.0]) {
+        if (tk > maxV) continue;
+        const ln = document.createElementNS(svgNS, "line");
+        ln.setAttribute("x1", L); ln.setAttribute("y1", y(tk));
+        ln.setAttribute("x2", L + plotW); ln.setAttribute("y2", y(tk));
+        ln.setAttribute("stroke", tk === 1 ? cssVar("--hot") : cssVar("--border"));
+        ln.setAttribute("stroke-width", tk === 1 ? "1.5" : "1");
+        if (tk === 1) ln.setAttribute("stroke-dasharray", "5 4");
+        svg.appendChild(ln);
+        const lb = document.createElementNS(svgNS, "text");
+        lb.setAttribute("x", L - 8); lb.setAttribute("y", y(tk) + 4);
+        lb.setAttribute("text-anchor", "end"); lb.setAttribute("font-size", "11");
+        lb.setAttribute("fill", tk === 1 ? cssVar("--hot") : cssVar("--text-secondary"));
+        lb.textContent = Math.round(tk * 100) + "%";
+        svg.appendChild(lb);
+      }
+
+      const tooltip = document.getElementById("tooltip");
+      idx.forEach((bi, k) => {
+        const x0 = L + k * (bw + gap) + gap / 2;
+        [[surged[bi], cssVar("--accent"), "急変あり"],
+         [calm[bi], cssVar("--text-secondary"), "急変なし"]].forEach(([b, col, name], j) => {
+          if (!b || !b.n || b.payback == null) return;
+          const bx = x0 + j * (bw / 2), by = y(b.payback);
+          const rect = document.createElementNS(svgNS, "rect");
+          rect.setAttribute("x", bx);
+          // 回収率 0%（該当馬が1頭も勝たなかった）でも棒を消さない。
+          // 高さ 0 だと「集計対象外」と見分けが付かないので、床に 2px 残す
+          const h = Math.max(2, y(0) - by);
+          rect.setAttribute("y", y(0) - h);
+          rect.setAttribute("width", bw / 2 - 3);
+          rect.setAttribute("height", h);
+          rect.setAttribute("fill", col);
+          // 標本が薄い帯は淡く。数字を過信させない
+          rect.setAttribute("fill-opacity", b.n < MIN_N ? "0.35" : "0.9");
+          rect.setAttribute("tabindex", "0");
+          const band = `${Math.round(b.lo*100)}–${Math.round(b.hi*100)}%`;
+          const show = ev => {
+            tooltip.replaceChildren();
+            const v = document.createElement("div"); v.className = "v";
+            v.textContent = `回収 ${Math.round(b.payback*100)}% / 勝率 ${(b.win_rate*100).toFixed(1)}%`;
+            const d = document.createElement("div");
+            d.textContent = `${band} ${name} / n=${b.n}`
+              + (b.n < MIN_N ? "（標本が少ない）" : "");
+            tooltip.append(v, d);
+            tooltip.style.opacity = "1";
+            const px = ev.clientX ?? rect.getBoundingClientRect().x;
+            const py = ev.clientY ?? rect.getBoundingClientRect().y;
+            tooltip.style.left = Math.min(px + 14, innerWidth - 250) + "px";
+            tooltip.style.top = (py + 14) + "px";
+          };
+          const hide = () => { tooltip.style.opacity = "0"; };
+          rect.addEventListener("pointermove", show);
+          rect.addEventListener("pointerleave", hide);
+          rect.addEventListener("focus", show);
+          rect.addEventListener("blur", hide);
+          svg.appendChild(rect);
+        });
+        const lb = document.createElementNS(svgNS, "text");
+        lb.setAttribute("x", x0 + bw / 2 - 2); lb.setAttribute("y", H - B + 20);
+        lb.setAttribute("text-anchor", "middle"); lb.setAttribute("font-size", "11");
+        lb.setAttribute("fill", cssVar("--text-secondary"));
+        const b0 = surged[bi] || calm[bi];
+        lb.textContent = `${Math.round(b0.lo*100)}–${Math.round(b0.hi*100)}%`;
+        svg.appendChild(lb);
+      });
+
+      const xl = document.createElementNS(svgNS, "text");
+      xl.setAttribute("x", L + plotW / 2); xl.setAttribute("y", H - 8);
+      xl.setAttribute("text-anchor", "middle"); xl.setAttribute("font-size", "12");
+      xl.setAttribute("fill", cssVar("--text-primary"));
+      xl.textContent = "支持率帯";
+      svg.appendChild(xl);
+      document.getElementById("surge-chart").appendChild(svg);
     }
 
     function buildSurge(bySurge, thresh) {
       const surged = bySurge.surged || [], calm = bySurge.calm || [];
       if (!surged.some(b => b.n > 0)) return;  // 急変データが無ければ出さない
-      document.getElementById("surge-section").hidden = false;
       if (thresh) document.getElementById("surge-thresh").textContent =
         `T-${thresh.min_slot} 以降・支持率 +${Math.round(thresh.delta*100)}pt 上昇`;
+      drawSurgeChart(bySurge);
 
       const table = document.getElementById("surge-table");
       const head = document.createElement("thead");
@@ -295,6 +434,80 @@
       table.append(head, body);
     }
 
+    function buildAxes(doc) {
+      const byP = doc.by_persistence, byT = doc.by_timing;
+      if (!byP && !byT) return;
+      const groups = [];
+      if (byP) groups.push(["持続", byP.persist || []], ["回帰", byP.revert || []]);
+      if (byT) groups.push(["直前", byT.late || []], ["それ以前", byT.early || []]);
+      if (!groups.some(([, bins]) => bins.some(b => b.n > 0))) return;
+
+      document.getElementById("axes-section").hidden = false;
+      if (doc.surge_threshold && doc.surge_threshold.late_window != null) {
+        document.getElementById("late-window").textContent =
+          doc.surge_threshold.late_window;
+      }
+
+      // 2 軸は同じ「急変あり」を別々に割ったもの。1 つの表に混ぜると
+      // 同じ馬が二度出ているように見えるので、軸ごとに独立した表にする
+      const host = document.getElementById("axes-table");
+      const axes = [];
+      if (byP) axes.push(["跳ねた後", [["持続", byP.persist || []], ["回帰", byP.revert || []]]]);
+      if (byT) axes.push(["跳ねた時刻", [["直前", byT.late || []], ["それ以前", byT.early || []]]]);
+
+      for (const [axisName, pair] of axes) {
+        if (!pair.some(([, bins]) => bins.some(b => b.n > 0))) continue;
+        // 軸ごとに独立した table を作る。1 つの table に thead を複数入れても
+        // 見出しがまとまってしまい、別の軸だと伝わらない
+        const table = document.createElement("table");
+        const capEl = document.createElement("caption");
+        capEl.textContent = axisName;
+        capEl.style.textAlign = "left";
+        capEl.style.fontWeight = "600";
+        capEl.style.padding = "1rem 0 0.3rem";
+        table.appendChild(capEl);
+        const head = document.createElement("thead");
+        const hr = document.createElement("tr");
+        ["支持率帯", "区分", "頭数", "実勝率", "回収率"].forEach(h => {
+          const th = document.createElement("th"); th.textContent = h; hr.appendChild(th);
+        });
+        head.appendChild(hr);
+
+        const body = document.createElement("tbody");
+        const nbins = Math.max(...pair.map(([, b]) => b.length));
+        for (let i = 0; i < nbins; i++) {
+          const rows = pair.filter(([, bins]) => bins[i] && bins[i].n > 0);
+          if (!rows.length) continue;
+          let first = true;
+          for (const [name, bins] of rows) {
+            const b = bins[i];
+            const tr = document.createElement("tr");
+            const payCls = "num " + (b.payback != null && b.payback >= 1 ? "pos" : "");
+            const cells = [
+              [first ? `${Math.round(b.lo*100)}–${Math.round(b.hi*100)}%` : "", ""],
+              [name + (b.n < MIN_N ? " ※" : ""), ""],
+              [String(b.n), "num"],
+              [`${(b.win_rate*100).toFixed(1)}%`, "num"],
+              [b.payback != null ? `${Math.round(b.payback*100)}%` : "—", payCls],
+            ];
+            for (const [txt, cls] of cells) {
+              const td = document.createElement("td");
+              td.textContent = txt; if (cls) td.className = cls; tr.appendChild(td);
+            }
+            body.appendChild(tr);
+            first = false;
+          }
+        }
+        table.append(head, body);
+        host.appendChild(table);
+      }
+
+      const since = (byP && byP.since) || (byT && byT.since);
+      document.getElementById("axes-note").textContent =
+        `※ = 頭数 ${MIN_N} 未満で誤差が大きい帯。`
+        + (since ? `この内訳は ${since.slice(0,4)}-${since.slice(4,6)}-${since.slice(6)} 以降の集計。` : "");
+    }
+
     function buildTable(bins) {
       const table = document.getElementById("table");
       table.hidden = false;
@@ -328,7 +541,13 @@
       try {
         const res = await fetch("data/calibration.json?v=" + Date.now());
         if (!res.ok) throw new Error(String(res.status));
-        render(await res.json());
+        const doc = await res.json();
+        LOADED = doc;
+        // 急変の対比が主役なので、全馬の較正（render）とは独立に描く。
+        // total が空でも急変だけは出せるようにする
+        if (doc.by_surge) buildSurge(doc.by_surge, doc.surge_threshold);
+        buildAxes(doc);
+        render(doc);
       } catch (e) {
         document.getElementById("status").textContent = "較正データを読み込めませんでした。";
       }
