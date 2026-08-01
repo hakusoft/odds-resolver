@@ -72,6 +72,51 @@ def run(date: str | None = None) -> dict:
             "calib_races": n_scored}
 
 
+def recalc(date: str) -> dict:
+    """S3 に焼いた races/*.json から、その日の較正だけを積み直す（#69）。
+
+    run() は DynamoDB の DAY 器を起点にするため、TTL(2日)が切れた日は
+    再焼きできない（`no races` になる）。だが S3 の view には snapshots と
+    result が残っているので、較正の再集計だけなら復元できる。
+
+    集計ロジックを変えた時（例: #87/#88 で系統を 3→7 に増やした時）に、
+    過去日を新しい定義で埋め直すための経路。**races/*.json は書き換えない** —
+    読むだけで、更新するのは calibration.json の by_date[date] のみ。
+    view を焼き直さないので CloudFront の invalidation も不要。
+    """
+    races = _load_day_races(date)
+    if not races:
+        return {"date": date, "races": 0, "note": "no archived races"}
+    day_calib = _empty_calib_set()
+    n_scored = 0
+    for race in races:
+        if _accumulate_calib(day_calib, race):
+            n_scored += 1
+    _update_calibration(date, day_calib, n_scored)
+    return {"date": date, "races": len(races), "calib_races": n_scored,
+            "source": "s3"}
+
+
+def _load_day_races(date: str) -> list[dict]:
+    """races/{date}-*.json を読む。ID の先頭 8 桁が日付なので前方一致で引ける。"""
+    s3 = _get_s3()
+    bucket = os.environ["DATA_BUCKET"]
+    out = []
+    token = None
+    while True:
+        kw = {"Bucket": bucket, "Prefix": f"races/{date}-"}
+        if token:
+            kw["ContinuationToken"] = token
+        res = s3.list_objects_v2(**kw)
+        for obj in res.get("Contents", []):
+            body = s3.get_object(Bucket=bucket, Key=obj["Key"])["Body"].read()
+            out.append(json.loads(body))
+        if not res.get("IsTruncated"):
+            break
+        token = res.get("NextContinuationToken")
+    return out
+
+
 def _put(key: str, body: dict, cache_control: str):
     data = json.dumps(body, ensure_ascii=False).encode("utf-8")
     for bucket, prefix in (
@@ -299,6 +344,10 @@ def _invalidate(date: str) -> str | None:
 
 
 def handler(event, context):
+    # S3 起点の較正再集計（#69）。TTL 切れの過去日を新しい集計定義で
+    # 埋め直す用。view は触らないので invalidation もしない
+    if isinstance(event, dict) and event.get("mode") == "recalc":
+        return recalc(event["date"])
     if isinstance(event, dict) and event.get("mode") == "yesterday":
         # 朝の窓で回収した前日の着順を view へ反映する再焼き（Issue #52）
         date = time.strftime("%Y%m%d",
