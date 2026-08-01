@@ -291,6 +291,15 @@ def _append_snapshot(race_id: str, now: float, parsed: dict,
         "odds": [Decimal(str(o)) if o is not None else None for o in parsed["odds"]],
         "expires_at": expires_at,
     }
+    # 複勝は範囲（lo-hi）なので odds とは別列で持つ（#89）。取得元の表に
+    # 複勝列が無い形（旧パーサ・想定外の構造）でも壊れないよう、全て None
+    # なら書かない = 既存スキーマのままにする
+    place = parsed.get("place") or []
+    if any(p is not None for p in place):
+        item["place"] = [
+            {"lo": Decimal(str(p["lo"])), "hi": Decimal(str(p["hi"]))}
+            if p is not None else None for p in place
+        ]
     if is_final:
         item["final"] = True
     _TABLE.put_item(Item=item)

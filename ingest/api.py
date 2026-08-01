@@ -96,6 +96,11 @@ def _race(rid: str) -> dict:
             "time": s["time"],
             **({"slot": s["slot"]} if "slot" in s else {}),
             "odds": [float(o) if o else None for o in s["odds"]],
+            # 複勝は範囲（#89）。取り始める前の snapshot には無いので、
+            # 有る時だけ載せる（古い view と混ざっても壊れない）
+            **({"place": [{"lo": float(p["lo"]), "hi": float(p["hi"])}
+                          if p else None for p in s["place"]]}
+               if s.get("place") else {}),
         } for s in snaps]
 
     out = {

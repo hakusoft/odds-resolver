@@ -62,6 +62,56 @@ def test_parse_odds_zero_becomes_none():
     p = parse_odds(html)
     assert [h["num"] for h in p["horses"]] == [1, 2, 3]
     assert p["odds"] == [None, 2.5, None]
+    # 複勝列が無い表でも壊れない（全て None で埋める）
+    assert p["place"] == [None, None, None]
+
+
+def test_parse_odds_reads_place_range():
+    """複勝は範囲（lo-hi）で載る。実ページの列構成に合わせた合成 HTML（#89）。"""
+    from ingest.parse import parse_odds
+    html = """
+    <table class="dataTable">
+      <tr><th>枠番</th><th>馬番</th><th>馬名</th>
+          <th>単勝オッズ</th><th>複勝オッズ</th><th>人気</th></tr>
+      <tr><td>1</td><td>1</td><td>アルファ</td>
+          <td>9.4</td><td>2.2-4.4</td><td>4番人気</td></tr>
+      <tr><td>2</td><td>2</td><td>ベータ</td>
+          <td>2.4</td><td>1.2 - 1.7</td><td>1番人気</td></tr>
+      <tr><td>3</td><td>3</td><td>ガンマ</td>
+          <td>0.0</td><td>0.0-0.0</td><td>-</td></tr>
+    </table>"""
+    p = parse_odds(html)
+    assert p["odds"] == [9.4, 2.4, None]
+    # 空白入りの範囲も読む。発売前の 0.0-0.0 は「まだ無い」= None
+    assert p["place"] == [{"lo": 2.2, "hi": 4.4}, {"lo": 1.2, "hi": 1.7}, None]
+
+
+def test_parse_odds_place_sorted_by_num():
+    """複勝も馬番順に並べ替わる（odds と添字が一致する）。"""
+    from ingest.parse import parse_odds
+    html = """
+    <table class="dataTable">
+      <tr><th>馬番</th><th>馬名</th><th>単勝オッズ</th><th>複勝オッズ</th></tr>
+      <tr><td>3</td><td>ガンマ</td><td>5.0</td><td>1.5-2.0</td></tr>
+      <tr><td>1</td><td>アルファ</td><td>2.0</td><td>1.1-1.3</td></tr>
+    </table>"""
+    p = parse_odds(html)
+    assert [h["num"] for h in p["horses"]] == [1, 3]
+    assert p["odds"] == [2.0, 5.0]
+    assert p["place"] == [{"lo": 1.1, "hi": 1.3}, {"lo": 1.5, "hi": 2.0}]
+
+
+def test_parse_odds_place_malformed_is_none():
+    """取消・想定外の表記は None（例外を出さない）。"""
+    from ingest.parse import parse_odds
+    html = """
+    <table class="dataTable">
+      <tr><th>馬番</th><th>馬名</th><th>単勝オッズ</th><th>複勝オッズ</th></tr>
+      <tr><td>1</td><td>アルファ</td><td>2.0</td><td>取消</td></tr>
+      <tr><td>2</td><td>ベータ</td><td>3.0</td><td></td></tr>
+    </table>"""
+    p = parse_odds(html)
+    assert p["place"] == [None, None]
 
 
 # 馬柱パーサ（#55）。合成 HTML で会場非依存・欠測堅牢性を検証する。
