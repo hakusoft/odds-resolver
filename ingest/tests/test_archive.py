@@ -74,6 +74,18 @@ class FakeS3:
             raise self.exceptions.NoSuchKey()
         return {"Body": io.BytesIO(self.objects[(Bucket, Key)]["body"])}
 
+    def list_objects_v2(self, Bucket, Prefix, ContinuationToken=None):
+        """本物と同じく 1 ページ最大 1000 件で切る（#69 の再集計が使う）。"""
+        keys = sorted(k for (b, k) in self.objects if b == Bucket
+                      and k.startswith(Prefix))
+        start = int(ContinuationToken) if ContinuationToken else 0
+        page = keys[start:start + 1000]
+        out = {"Contents": [{"Key": k} for k in page]}
+        if start + 1000 < len(keys):
+            out["IsTruncated"] = True
+            out["NextContinuationToken"] = str(start + 1000)
+        return out
+
 
 def _setup(monkeypatch):
     monkeypatch.setenv("TABLE_NAME", "dummy")
@@ -320,6 +332,63 @@ def test_since_is_none_when_only_legacy_days(monkeypatch):
     archive._update_calibration("20260701", doc["by_date"]["20260701"]["sets"], 10)
     out = _body(fake, "data-bkt", "calibration.json")
     assert out["by_persistence"]["since"] is None
+
+
+def test_recalc_rebuilds_calibration_from_s3(monkeypatch):
+    """TTL 切れでも S3 の races/*.json から較正を積み直せる（#69）。"""
+    archive, fake = _setup(monkeypatch)
+    # 先に通常の焼きで races/*.json を用意する
+    archive.run("20260726")
+    before = _body(fake, "data-bkt", "calibration.json")
+    n_before = sum(b["n"] for b in before["total"])
+    assert n_before > 0
+
+    # 較正だけ消して DynamoDB も空にする（TTL 切れの再現）
+    del fake.objects[("data-bkt", "calibration.json")]
+    monkeypatch.setattr(archive, "_index",
+                        lambda d: (_ for _ in ()).throw(KeyError(d)))
+    assert archive.run("20260726")["races"] == 0      # 通常経路は復元不能
+
+    out = archive.recalc("20260726")                  # S3 起点なら復元できる
+    assert out["races"] > 0 and out["source"] == "s3"
+    after = _body(fake, "data-bkt", "calibration.json")
+    assert sum(b["n"] for b in after["total"]) == n_before
+
+
+def test_recalc_reports_when_no_archived_races(monkeypatch):
+    archive, _ = _setup(monkeypatch)
+    out = archive.recalc("20991231")
+    assert out["races"] == 0 and "no archived" in out["note"]
+
+
+def test_recalc_does_not_rewrite_race_views(monkeypatch):
+    """再集計は読むだけ。races/*.json と index を書き換えない。"""
+    archive, fake = _setup(monkeypatch)
+    archive.run("20260726")
+    race_keys = {k: v["body"] for (b, k), v in fake.objects.items()
+                 if k.startswith("races/")}
+    index_before = _body(fake, "data-bkt", "20260726/index.json")
+
+    archive.recalc("20260726")
+
+    after = {k: v["body"] for (b, k), v in fake.objects.items()
+             if k.startswith("races/")}
+    assert after == race_keys
+    assert _body(fake, "data-bkt", "20260726/index.json") == index_before
+
+
+def test_handler_routes_recalc_mode(monkeypatch):
+    archive, fake = _setup(monkeypatch)
+    archive.run("20260726")
+    seen = {}
+
+    def _fake_recalc(d):
+        seen["date"] = d
+        return {"ok": True}
+
+    monkeypatch.setattr(archive, "recalc", _fake_recalc)
+    assert archive.handler({"mode": "recalc", "date": "20260726"}, None) == {"ok": True}
+    assert seen["date"] == "20260726"
 
 
 def test_calibration_json_written_and_dedupes_by_date(monkeypatch):
