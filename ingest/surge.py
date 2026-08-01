@@ -82,7 +82,7 @@ def surged_mask(snapshots: list, n_horses: int) -> list[bool]:
 def surge_events(snapshots: list, n_horses: int) -> list[dict | None]:
     """各馬の「最初の急変」の前後を追跡した記録を返す（#88）。
 
-    返り値は馬番順に {slot, before, after, final, persist, reverted} か、
+    返り値は馬番順に {slot, before, after, final, persist, reverted, late} か、
     急変していなければ None。
 
     - before  : 急変直前の支持率

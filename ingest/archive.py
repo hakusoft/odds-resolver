@@ -229,12 +229,10 @@ def _update_calibration(date: str, day_calib: dict, n_races: int):
     # それぞれ surged を排他に二分する。
     #
     # **分母の期間が total/surged/calm とズレる**点に注意。by_date は日別の
-    # 集計値だけを持ち生レースを残さないので、この機能より前に焼いた日
-    # （7/25〜7/31）は新キーが 0 のまま埋まらない。遡って埋めるには当該日を
-    # 再焼き（archive を date 指定で再実行）する必要がある。読む側が誤解
-    # しないよう since に開始日を出す。
-    # 新軸を実際に持つ最初の日。この日より前は 0 なので、by_persistence /
-    # by_timing の分母は total と揃わない。読む側はここを見て期間を合わせる。
+    # 集計値だけを持ち生レースを残さないので、この機能より前に焼いた日は
+    # 新キーが 0 のまま埋まらない（遡るには当該日を date 指定で再焼きする）。
+    # since に「新軸を実際に持つ最初の日」を出し、読む側が期間を合わせられる
+    # ようにする。全日が旧形式なら None（0 を実績と誤読させない）。
     detailed = sorted(d for d, e in doc["by_date"].items()
                       if "persist" in (e.get("sets") or {}))
     since = detailed[0] if detailed else None
