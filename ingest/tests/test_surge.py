@@ -83,6 +83,51 @@ def test_notify_suppresses_duplicate(monkeypatch):
     assert published == []  # 重複ゆえ送らない
 
 
+def test_notify_records_signal_before_result(monkeypatch):
+    """急変を検知した時点の値を SIGNAL# に残す（#106・前向き検証）。
+
+    結果はここでは書かない。予測が結果より先に確定していることが
+    この記録の値打ちなので、着順が入る余地を持たせない。
+    """
+    f = _fetch(monkeypatch)
+    written = []
+    monkeypatch.setattr(f, "_publish_surges", lambda *a: None)
+    monkeypatch.setattr(f._TABLE, "put_item",
+                        lambda Item: written.append(Item))
+    race = {"race_id": "20260804-mo-01", "venue": "盛岡",
+            "race_no": Decimal(1), "post_time": "12:00"}
+    parsed = {"odds": [2.0, 3.0, 10.0],
+              "horses": [{"num": 1, "name": "ア"}, {"num": 2, "name": "イ"},
+                         {"num": 3, "name": "ウ"}]}
+    f._notify_surges(race, [2.0, 10.0, 10.0], parsed, 8)
+
+    sig = [w for w in written if str(w.get("sk", "")).startswith("SIGNAL#")]
+    assert len(sig) == 1
+    s = sig[0]
+    assert s["pk"] == "RACE#20260804-mo-01" and s["sk"] == "SIGNAL#02"
+    assert s["num"] == 2 and s["slot_minutes"] == 8
+    assert s["support"] > 0            # 判定時点の支持率が入る
+    # 結果に類する項目は持たない
+    assert not any(k in s for k in ("pos", "won", "top3", "finish"))
+
+
+def test_notify_records_nothing_without_race_id(monkeypatch):
+    """ID が無くても通知は止めない（記録は本番通知より優先度が低い）。"""
+    f = _fetch(monkeypatch)
+    published = []
+    written = []
+    monkeypatch.setattr(f, "_publish_surges",
+                        lambda race, surges, m: published.append(surges))
+    monkeypatch.setattr(f._TABLE, "put_item", lambda Item: written.append(Item))
+    race = {"venue": "盛岡", "race_no": Decimal(3), "post_time": "12:00"}
+    parsed = {"odds": [2.0, 3.0, 10.0],
+              "horses": [{"num": 1, "name": "ア"}, {"num": 2, "name": "イ"},
+                         {"num": 3, "name": "ウ"}]}
+    f._notify_surges(race, [2.0, 10.0, 10.0], parsed, 8)
+    assert len(published) == 1        # 通知は出る
+    assert not [w for w in written if str(w.get("sk", "")).startswith("SIGNAL#")]
+
+
 def test_publish_noop_without_topic(monkeypatch):
     f = _fetch(monkeypatch)
     monkeypatch.delenv("SURGE_TOPIC_ARN", raising=False)

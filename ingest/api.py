@@ -117,6 +117,14 @@ def _race(rid: str) -> dict:
         # 馬柱（#55）。DynamoDB の Decimal を素の数値へ戻して露出する。
         # archive は api の整形を共用するため、これで S3 view にも一緒に焼かれる
         out["records"] = _plain(meta["records"])
+    # 前向き検証の予測記録（#106）。判定時点の値だけを持ち、結果は含まない。
+    # 同じ query で取れるので追加クエリは要らない
+    signals = [i for i in items if i["sk"].startswith("SIGNAL#")]
+    if signals:
+        signals.sort(key=lambda x: x["sk"])
+        out["signals"] = [_plain({k: v for k, v in s.items()
+                                  if k not in ("pk", "sk", "expires_at")})
+                          for s in signals]
     return out
 
 
