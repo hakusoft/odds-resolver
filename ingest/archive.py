@@ -54,8 +54,10 @@ def run(date: str | None = None) -> dict:
     day_calib = _empty_calib_set()
     n_scored = 0
     classes = []  # 当日総括（#83）用の分類。追加クエリなしで同ループから
+    fetched = []  # 前向き検証（#106）も同じ _race の結果を使い回す
     for r in index["races"]:
         race = _race(r["race_id"])
+        fetched.append(race)
         _put(f"races/{r['race_id']}.json", race, _CC_RACE)
         if _accumulate_calib(day_calib, race):
             n_scored += 1
@@ -68,8 +70,9 @@ def run(date: str | None = None) -> dict:
 
     days = _update_days(index)
     _update_calibration(date, day_calib, n_scored)
+    n_signals = _append_forward_log(date, fetched)
     return {"date": date, "races": len(index["races"]), "days": len(days),
-            "calib_races": n_scored}
+            "calib_races": n_scored, "signals": n_signals}
 
 
 def recalc(date: str) -> dict:
@@ -95,6 +98,60 @@ def recalc(date: str) -> dict:
     _update_calibration(date, day_calib, n_scored)
     return {"date": date, "races": len(races), "calib_races": n_scored,
             "source": "s3"}
+
+
+def _append_forward_log(date: str, races: list[dict]) -> int:
+    """予測（signals）に結果を突き合わせ、前向き検証ログへ追記する（#106）。
+
+    較正（#53 以降）は結果を見てから遡って集計するため、「良い帯を探して
+    見つけた」以上のことが言えない。ここは **予測が結果より先に確定して
+    いた**ことが構造的に保証されるログを作る。fetch が締切前に書いた
+    SIGNAL# をそのまま持ち込み、着順だけを後から付ける。
+
+    日ごとに 1 ファイル（forward/{date}.json）。**既にあれば書かない** —
+    再焼きで結果が変わることはないし、上書きを許すと「後から書き換えて
+    いない」という前提が崩れる。検証の値打ちはそこにしかない。
+    """
+    key = f"forward/{date}.json"
+    if _exists(key):
+        return 0
+    rows = []
+    for race in races:
+        signals = race.get("signals")
+        if not signals:
+            continue
+        result = race.get("result") or []
+        pos = {r["num"]: r["pos"] for r in result}
+        for s in signals:
+            num = int(s["num"])
+            rows.append({
+                "race_id": race["race_id"],
+                "venue": race.get("venue"),
+                "num": num,
+                "name": s.get("name"),
+                # --- 予測時点（fetch が締切前に確定させた値）---
+                "support": s.get("support"),
+                "odds": s.get("odds"),
+                "delta": s.get("delta"),
+                "slot_minutes": s.get("slot_minutes"),
+                "signaled_at": s.get("signaled_at"),
+                # --- 結果（後から付けるのはここだけ）---
+                "pos": pos.get(num),
+                "won": pos.get(num) == 1,
+                "top3": pos.get(num) is not None and pos[num] <= 3,
+            })
+    if not rows:
+        return 0
+    _put(key, {"date": date, "n": len(rows), "rows": rows}, _CC_RACE)
+    return len(rows)
+
+
+def _exists(key: str) -> bool:
+    try:
+        _get_s3().head_object(Bucket=os.environ["DATA_BUCKET"], Key=key)
+        return True
+    except Exception:
+        return False
 
 
 def _load_day_races(date: str) -> list[dict]:

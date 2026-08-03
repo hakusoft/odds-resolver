@@ -74,6 +74,11 @@ class FakeS3:
             raise self.exceptions.NoSuchKey()
         return {"Body": io.BytesIO(self.objects[(Bucket, Key)]["body"])}
 
+    def head_object(self, Bucket, Key):
+        if (Bucket, Key) not in self.objects:
+            raise self.exceptions.NoSuchKey()
+        return {}
+
     def list_objects_v2(self, Bucket, Prefix, ContinuationToken=None):
         """本物と同じく 1 ページ最大 1000 件で切る（#69 の再集計が使う）。"""
         keys = sorted(k for (b, k) in self.objects if b == Bucket
@@ -108,7 +113,9 @@ def _body(fake, bucket, key):
 def test_run_writes_both_buckets_with_api_schema(monkeypatch):
     archive, fake = _setup(monkeypatch)
     result = archive.run("20260726")
-    assert result == {"date": "20260726", "races": 2, "days": 1, "calib_races": 1}
+    # signals は前向き検証ログ（#106）に書いた行数。この器には SIGNAL# が無い
+    assert result == {"date": "20260726", "races": 2, "days": 1,
+                      "calib_races": 1, "signals": 0}
 
     for bucket, prefix in (("data-bkt", ""), ("front-bkt", "data/")):
         idx = _body(fake, bucket, f"{prefix}20260726/index.json")
@@ -399,6 +406,59 @@ def test_calibration_doc_omits_place_before_any_data(monkeypatch):
     archive.run("20260726")
     doc = _body(fake, "data-bkt", "calibration.json")
     assert "place" not in doc
+
+
+# ---- 前向き検証ログ（#106） ----
+
+def _race_with_signal(rid="20260726-mo-01", pos=1):
+    return {
+        "race_id": rid, "venue": "盛岡",
+        "horses": [{"num": 1}, {"num": 2}],
+        "snapshots": [{"slot": "T-8", "odds": [2.0, 4.0]}],
+        "result": [{"pos": pos, "num": 1}, {"pos": 3 - pos, "num": 2}],
+        "signals": [{"num": 1, "name": "アルファ", "support": 0.25,
+                     "odds": 4.0, "delta": 0.09, "slot_minutes": 8,
+                     "signaled_at": 1785000000}],
+    }
+
+
+def test_forward_log_joins_signal_with_result(monkeypatch):
+    archive, fake = _setup(monkeypatch)
+    n = archive._append_forward_log("20260726", [_race_with_signal(pos=1)])
+    assert n == 1
+    doc = _body(fake, "data-bkt", "forward/20260726.json")
+    row = doc["rows"][0]
+    # 予測時点の値がそのまま残る
+    assert row["support"] == 0.25 and row["delta"] == 0.09
+    assert row["slot_minutes"] == 8
+    # 結果は後から付いた分だけ
+    assert row["pos"] == 1 and row["won"] is True and row["top3"] is True
+
+
+def test_forward_log_marks_loss(monkeypatch):
+    archive, fake = _setup(monkeypatch)
+    archive._append_forward_log("20260726", [_race_with_signal(pos=2)])
+    row = _body(fake, "data-bkt", "forward/20260726.json")["rows"][0]
+    assert row["pos"] == 2 and row["won"] is False and row["top3"] is True
+
+
+def test_forward_log_is_write_once(monkeypatch):
+    """再焼きしても上書きしない。後から書き換えないことが検証の前提。"""
+    archive, fake = _setup(monkeypatch)
+    archive._append_forward_log("20260726", [_race_with_signal(pos=1)])
+    first = _body(fake, "data-bkt", "forward/20260726.json")
+    # 結果を書き換えた同じ日を再投入しても、ファイルは変わらない
+    n = archive._append_forward_log("20260726", [_race_with_signal(pos=2)])
+    assert n == 0
+    assert _body(fake, "data-bkt", "forward/20260726.json") == first
+
+
+def test_forward_log_skips_races_without_signal(monkeypatch):
+    archive, fake = _setup(monkeypatch)
+    race = _race_with_signal()
+    del race["signals"]
+    assert archive._append_forward_log("20260726", [race]) == 0
+    assert ("data-bkt", "forward/20260726.json") not in fake.objects
 
 
 def test_recalc_rebuilds_calibration_from_s3(monkeypatch):

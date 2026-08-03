@@ -355,6 +355,8 @@ def _notify_surges(race: dict, prev_odds: list | None, parsed: dict,
     fresh = [s for s in surges if s["num"] not in already]
     if not fresh:
         return
+    # 記録が先。通知（SNS 未設定なら何もしない）に成否を左右させない
+    _record_signal(race, fresh, minutes_to_post, parsed, time.time())
     _publish_surges(race, fresh, minutes_to_post)
     race["surged"] = sorted(already | {s["num"] for s in fresh})
     race["surged"] = [Decimal(n) for n in race["surged"]]
@@ -384,6 +386,55 @@ def _record_attempt(race: dict, now: float, attr: str = "last_attempt"):
     from decimal import Decimal
     race[attr] = Decimal(str(int(now)))
     _TABLE.put_item(Item=race)
+
+
+def _record_signal(race: dict, surges: list, minutes_to_post: float,
+                   parsed: dict, now: float):
+    """急変を検知した**その時点**の予測を記録する（#106・前向き検証）。
+
+    較正（#53 以降）は結果が出た後に遡って集計するので、「良い帯を探して
+    見つけた」以上のことが言えない。後から的を描いていないことを示すには、
+    **予測を結果より先に確定させ、後から書き換えない**記録が要る。
+
+    ここは急変が確定する唯一の地点なので、通知と同じ場所で残す。判定に
+    使った支持率も一緒に書く（後で帯を切り直せるように。結果を見てから
+    帯の定義を動かすと、それ自体が後知恵になる）。
+
+    sk は SIGNAL# 前置。RACE# 配下に TS#/RESULT と同居するため、参照側が
+    begins_with で種類を明示できるようにする（#63 の教訓）。
+    DynamoDB は TTL 2 日なので、夜間バッチが S3 へ焼いて永続化する。
+    """
+    from decimal import Decimal
+    rid = race.get("race_id")
+    sup = _support_of(parsed["odds"])
+    # 記録できない事情（ID 欠落・オッズ全滅）があっても通知は止めない。
+    # 検証用の記録は「あれば嬉しい」もので、本番の通知より優先度が低い
+    if not rid or sup is None:
+        return
+    num_to_idx = {int(h["num"]): i for i, h in enumerate(parsed["horses"])}
+    for s in surges:
+        i = num_to_idx.get(int(s["num"]))
+        if i is None:
+            continue
+        _TABLE.put_item(Item={
+            "pk": f"RACE#{rid}",
+            "sk": f"SIGNAL#{int(s['num']):02d}",
+            "num": Decimal(int(s["num"])),
+            "name": s["name"],
+            # 判定時点の値。結果は入れない（答え合わせは後日 archive が行う）
+            "support": Decimal(str(round(sup[i], 4))),
+            "odds": Decimal(str(parsed["odds"][i])) if parsed["odds"][i] else None,
+            "delta": Decimal(str(s["delta"])),
+            "slot_minutes": Decimal(int(minutes_to_post)),
+            "signaled_at": Decimal(str(int(now))),
+            "expires_at": int(now) + _TTL_DAYS * 24 * 3600,
+        })
+
+
+def _support_of(odds: list) -> list[float] | None:
+    inv = [(1.0 / float(o) if o else 0.0) for o in odds]
+    s = sum(inv)
+    return [x / s for x in inv] if s > 0 else None
 
 
 def _put_result(race_id: str, finish: list[dict], now: float):
