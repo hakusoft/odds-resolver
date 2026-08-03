@@ -7,6 +7,18 @@ allowed-tools: Bash, Read, Grep, Glob
 
 # morning-check — odds-resolver の朝のチェック
 
+> **配置について**: 正本はこのリポジトリ（`.claude/skills/morning-check/`）に置き、
+> `~/.claude/skills/` からシンボリックリンクで参照する。プロジェクトスキルは
+> **セッションのルート直下**の `.claude/skills/` しか読まれず、`haku/` を起点に
+> 作業すると `haku/odds-resolver/.claude/` は対象外になるため。
+>
+> ```bash
+> ln -sfn "$(git rev-parse --show-toplevel)/.claude/skills/morning-check" \
+>   ~/.claude/skills/morning-check
+> ```
+>
+> リンクなので、このファイルを更新すればスキルにもそのまま反映される。
+
 自走している取得・集計が昨夜も正しく回ったかを確認し、**数字の動きを読む**。
 異常が無いことの確認だけで終わらせず、前日との差分から「何が言えるようになったか」
 「まだ言えないか」を判断する。
