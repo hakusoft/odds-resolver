@@ -53,6 +53,7 @@ def run(date: str | None = None) -> dict:
 
     day_calib = _empty_calib_set()
     n_scored = 0
+    n_banei_scored = 0  # ばんえい（#109）は平地の n_races と別カウント
     classes = []  # 当日総括（#83）用の分類。追加クエリなしで同ループから
     fetched = []  # 前向き検証（#106）も同じ _race の結果を使い回す
     for r in index["races"]:
@@ -60,7 +61,10 @@ def run(date: str | None = None) -> dict:
         fetched.append(race)
         _put(f"races/{r['race_id']}.json", race, _CC_RACE)
         if _accumulate_calib(day_calib, race):
-            n_scored += 1
+            if race.get("venue") == _BANEI_VENUE:
+                n_banei_scored += 1
+            else:
+                n_scored += 1
         c = classify_race(race)
         if c is not None:
             classes.append({"race_id": r["race_id"], "venue": r["venue"],
@@ -69,10 +73,11 @@ def run(date: str | None = None) -> dict:
     _put(f"{date}/index.json", index, _CC_DAY_INDEX)
 
     days = _update_days(index)
-    _update_calibration(date, day_calib, n_scored)
+    _update_calibration(date, day_calib, n_scored, n_banei_scored)
     n_signals = _append_forward_log(date, fetched)
     return {"date": date, "races": len(index["races"]), "days": len(days),
-            "calib_races": n_scored, "signals": n_signals}
+            "calib_races": n_scored, "banei_races": n_banei_scored,
+            "signals": n_signals}
 
 
 def recalc(date: str) -> dict:
@@ -92,12 +97,16 @@ def recalc(date: str) -> dict:
         return {"date": date, "races": 0, "note": "no archived races"}
     day_calib = _empty_calib_set()
     n_scored = 0
+    n_banei_scored = 0
     for race in races:
         if _accumulate_calib(day_calib, race):
-            n_scored += 1
-    _update_calibration(date, day_calib, n_scored)
+            if race.get("venue") == _BANEI_VENUE:
+                n_banei_scored += 1
+            else:
+                n_scored += 1
+    _update_calibration(date, day_calib, n_scored, n_banei_scored)
     return {"date": date, "races": len(races), "calib_races": n_scored,
-            "source": "s3"}
+            "banei_races": n_banei_scored, "source": "s3"}
 
 
 def _append_forward_log(date: str, races: list[dict]) -> int:
@@ -264,6 +273,11 @@ _CALIB_SETS = ("total", "surged", "calm",
 # 標本が貯まってから細分するかを判断する
 _PLACE_SETS = ("total", "surged", "calm")
 
+# 帯広ばんえい（#109）は他14場と種目が違う（そりを引き2つの山を越える）ため
+# 平地の較正に混ぜない。標本も少ないので複勝と同じく粗く3系統だけ積む
+_BANEI_VENUE = "帯広ば"
+_BANEI_SETS = ("total", "surged", "calm")
+
 
 def _empty_bins() -> list[dict]:
     return [{"n": 0, "sum_support": 0.0, "wins": 0, "payback": 0.0}
@@ -279,6 +293,7 @@ def _empty_place_bins() -> list[dict]:
 def _empty_calib_set() -> dict:
     acc = {k: _empty_bins() for k in _CALIB_SETS}
     acc["place"] = {k: _empty_place_bins() for k in _PLACE_SETS}
+    acc["banei"] = {k: _empty_bins() for k in _BANEI_SETS}
     return acc
 
 
@@ -286,7 +301,8 @@ def _accumulate_calib(acc: dict, race: dict) -> bool:
     """レース詳細から全馬/急変あり/急変なしの較正を acc に足す。
 
     着順・オッズが無ければ False。急変判定は surge.py を全スナップ
-    ショットに適用（可視化 #73 と同じ定義）。
+    ショットに適用（可視化 #73 と同じ定義）。帯広ばんえい（#109）は種目が
+    違うため平地の系統には積まず、acc["banei"] へ別集計する。
     """
     if not race.get("result") or not race.get("snapshots"):
         return False
@@ -308,22 +324,28 @@ def _accumulate_calib(acc: dict, race: dict) -> bool:
         "late": late_mask(snaps, nh),
         "early": early_mask(snaps, nh),
     }
+
+    is_banei = race.get("venue") == _BANEI_VENUE
+    keys = _BANEI_SETS if is_banei else _CALIB_SETS
+    dest = acc["banei"] if is_banei else acc
     computed = {}
-    for k in _CALIB_SETS:
+    for k in keys:
         bins = calibration_bins(odds, winner_idx, masks[k])
         if bins is None:
             return False
         computed[k] = bins
-    for k in _CALIB_SETS:
-        for a, b in zip(acc[k], computed[k]):
+    for k in keys:
+        for a, b in zip(dest[k], computed[k]):
             a["n"] += b["n"]
             a["sum_support"] += b["sum_support"]
             a["wins"] += b["wins"]
             a["payback"] += b["payback"]
 
     # 複勝の較正（#89）。複勝を取り始める前のレースには place が無いので、
-    # 有る時だけ積む。単勝側とは母数が別（place が欠けた馬は入らない）
-    _accumulate_place(acc, race, odds, masks)
+    # 有る時だけ積む。単勝側とは母数が別（place が欠けた馬は入らない）。
+    # ばんえいも複勝は取っているが、まずは平地側に混ぜず素通りする
+    if not is_banei:
+        _accumulate_place(acc, race, odds, masks)
     return True
 
 
@@ -347,10 +369,12 @@ def _accumulate_place(acc: dict, race: dict, odds: list, masks: dict):
             a["payback"] += b["payback"]
 
 
-def _update_calibration(date: str, day_calib: dict, n_races: int):
+def _update_calibration(date: str, day_calib: dict, n_races: int,
+                        n_banei_races: int = 0):
     doc = _load_calibration()
     # 再焼きで同日を上書きしても二重計上しないよう、日別に置き換える
-    doc["by_date"][date] = {"races": n_races, "sets": day_calib}
+    doc["by_date"][date] = {"races": n_races, "banei_races": n_banei_races,
+                            "sets": day_calib}
     total = _empty_calib_set()
     for entry in doc["by_date"].values():
         sets = entry.get("sets") or {"total": entry.get("bins", _empty_bins())}
@@ -369,6 +393,16 @@ def _update_calibration(date: str, day_calib: dict, n_races: int):
                 t["n"] += b["n"]
                 t["sum_support"] += b["sum_support"]
                 t["hits"] += b["hits"]
+                t["payback"] += b.get("payback", 0.0)
+        # 帯広ばんえい（#109）。平地とは別集計なので取り始める前の日は素通り
+        for k in _BANEI_SETS:
+            src = (sets.get("banei") or {}).get(k)
+            if not src:
+                continue
+            for t, b in zip(total["banei"][k], src):
+                t["n"] += b["n"]
+                t["sum_support"] += b["sum_support"]
+                t["wins"] += b["wins"]
                 t["payback"] += b.get("payback", 0.0)
     doc["bin_edges"] = CALIB_BINS
     doc["total"] = _finalize_bins(total["total"])
@@ -404,6 +438,17 @@ def _update_calibration(date: str, day_calib: dict, n_races: int):
     if with_place:
         doc["place"] = {k: _finalize_place(total["place"][k]) for k in _PLACE_SETS}
         doc["place"]["since"] = with_place[0]
+    # 帯広ばんえい（#109）。同じ「実際に頭数が入っている」判定で since を出す
+    with_banei = sorted(
+        d for d, e in doc["by_date"].items()
+        if any(b["n"] for k, bins in ((e.get("sets") or {}).get("banei") or {}).items()
+               for b in bins)
+    )
+    if with_banei:
+        doc["banei"] = {k: _finalize_bins(total["banei"][k]) for k in _BANEI_SETS}
+        doc["banei"]["since"] = with_banei[0]
+        doc["banei"]["n_races"] = sum(
+            e.get("banei_races", 0) for e in doc["by_date"].values())
     doc["surge_threshold"] = {"min_slot": SURGE_MIN_SLOT, "delta": SURGE_DELTA,
                               "late_window": LATE_WINDOW}
     doc["n_days"] = len(doc["by_date"])
