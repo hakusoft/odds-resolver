@@ -62,17 +62,41 @@ gh run list --repo hakusoft/odds-resolver --branch main --limit 3
 
 ## 2. Lambda のエラー（過去 24h）
 
-4 関数すべてを見る。**期待値は全て 0.0**。
+4 関数すべてを見る。**エラー数と呼び出し数を並べる。**
 
 ```bash
 for fn in morning fetch archive read-api; do
-  v=$(aws cloudwatch get-metric-statistics --namespace AWS/Lambda --metric-name Errors \
+  q() { aws cloudwatch get-metric-statistics --namespace AWS/Lambda --metric-name "$1" \
     --dimensions Name=FunctionName,Value=odds-resolver-$fn \
     --start-time "$(date -u -v-24H +%Y-%m-%dT%H:%M:%S)" \
     --end-time "$(date -u +%Y-%m-%dT%H:%M:%S)" \
-    --period 86400 --statistics Sum --query 'Datapoints[0].Sum' --output text 2>/dev/null)
-  echo "  $fn: ${v:-0.0}"
+    --period 86400 --statistics Sum --query 'Datapoints[0].Sum' --output text 2>/dev/null; }
+  echo "  $fn: エラー $(q Errors) / 呼び出し $(q Invocations)"
 done
+```
+
+**`None` を `0` に潰さないこと。** メトリクスが無い（`None`）は「エラーが 0」
+ではなく「**一度も呼ばれていない**」を意味する。両者は別の状態で、
+潰すと異常の見落としにつながる。
+
+期待値:
+
+| 関数 | 呼び出し | 意味 |
+|---|---|---|
+| `fetch` | 1440（毎分） | 減っていたら EventBridge か Lambda の異常 |
+| `morning` / `archive` | 1〜数回 | 0 なら夜間ジョブが動いていない |
+| `read-api` | **0 でも正常** | 当日ページの訪問者数。デモ段階では 0 が普通 |
+
+`read-api` が 0 の時に本当に壊れていないか見るには、実際に叩く。
+**レース ID は推測せず、DynamoDB から実在するものを取る**（存在しない ID の
+404 を障害と誤読しないため）。
+
+```bash
+RID=$(aws dynamodb query --table-name odds-resolver-hot \
+  --key-condition-expression "pk = :p" \
+  --expression-attribute-values '{":p":{"S":"DAY#'"$(date +%Y%m%d)"'"}}' \
+  --limit 1 --query 'Items[0].race_id.S' --output text)
+curl -s -o /dev/null -w "  HTTP %{http_code} / %{time_total}s\n" "$CF/api/?id=$RID"
 ```
 
 `date -u -v-24H` は **macOS(BSD date) の書式**。Linux から回す場合は
@@ -185,6 +209,54 @@ PY
 ```
 
 複勝も同じ要領で前日と比べる（`place` が有る日だけ）。
+
+## 5.5 前向き検証（#106）— 貯まり具合だけを見る
+
+較正（§5）は結果を見てから遡って集計するので、後から的を描いた可能性を
+排除できない。前向き検証は**予測を結果より先に確定させた**記録で、
+これだけが「勝てるか」に答えられる。
+
+```bash
+DATA=$(aws lambda get-function-configuration --function-name odds-resolver-archive \
+  --query 'Environment.Variables.DATA_BUCKET' --output text)
+aws s3 ls "s3://$DATA/forward/" 2>/dev/null | tail -5
+```
+
+累計を出す。**帯を切らず、全体の n だけを見る。**
+
+```bash
+python3 - <<'PY'
+import json,subprocess,os
+b=subprocess.run(['aws','lambda','get-function-configuration','--function-name',
+  'odds-resolver-archive','--query','Environment.Variables.DATA_BUCKET',
+  '--output','text'],capture_output=True,text=True).stdout.strip()
+ls=subprocess.run(['aws','s3','ls',f's3://{b}/forward/'],
+  capture_output=True,text=True).stdout.split()
+keys=[k for k in ls if k.endswith('.json')]
+n=w=0; pay=0.0
+for k in keys:
+    d=json.loads(subprocess.run(['aws','s3','cp',f's3://{b}/forward/{k}','-'],
+      capture_output=True,text=True).stdout)
+    for r in d['rows']:
+        if r['pos'] is None: continue      # 着順が付いていない行は数えない
+        n+=1
+        if r['won']: w+=1; pay+=float(r['odds'] or 0)
+print(f'日数 {len(keys)} / 記録 {n} 頭 / 的中 {w}')
+if n: print(f'勝率 {w/n:.1%} / 回収 {pay/n:.1%}')
+print(f'n>=300 まで あと {max(0,300-n)} 頭')
+PY
+```
+
+### ここで数字を読まない
+
+**n≥300 に達するまで、勝率も回収率も解釈しない**（#106 で先に決めた基準）。
+途中経過を毎朝眺めると、良い日に「効いている」悪い日に「ダメだ」と
+判断が揺れる。それを避けるために基準を先に置いた。
+
+見るのは **貯まり具合（n）と、記録が止まっていないか**だけでよい。
+
+到達後の判定も #106 で決めてある: 回収率が 100% を跨いだら「効果なし」に倒す。
+帯の定義と急変閾値は検証期間中に動かさない（動かすなら検証はやり直し）。
 
 ### 読み方の原則（過去に踏んだ罠）
 
