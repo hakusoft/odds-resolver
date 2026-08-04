@@ -115,7 +115,7 @@ def test_run_writes_both_buckets_with_api_schema(monkeypatch):
     result = archive.run("20260726")
     # signals は前向き検証ログ（#106）に書いた行数。この器には SIGNAL# が無い
     assert result == {"date": "20260726", "races": 2, "days": 1,
-                      "calib_races": 1, "signals": 0}
+                      "calib_races": 1, "banei_races": 0, "signals": 0}
 
     for bucket, prefix in (("data-bkt", ""), ("front-bkt", "data/")):
         idx = _body(fake, bucket, f"{prefix}20260726/index.json")
@@ -406,6 +406,93 @@ def test_calibration_doc_omits_place_before_any_data(monkeypatch):
     archive.run("20260726")
     doc = _body(fake, "data-bkt", "calibration.json")
     assert "place" not in doc
+
+
+# ---- 帯広ばんえいの分離（#109） ----
+
+def test_accumulate_calib_routes_banei_to_separate_set(monkeypatch):
+    """帯広ばんえいは平地の total/surged/calm に混ぜず acc['banei'] へ積む。"""
+    archive, _ = _setup(monkeypatch)
+    acc = archive._empty_calib_set()
+    race = {
+        "venue": "帯広ば",
+        "horses": [{"num": 1}, {"num": 2}, {"num": 3}],
+        "snapshots": [{"odds": [1.5, 5.0, 5.0]}],
+        "result": [{"pos": 1, "num": 1}, {"pos": 2, "num": 2}],
+    }
+    assert archive._accumulate_calib(acc, race) is True
+    # 平地側は増えない
+    assert sum(b["n"] for b in acc["total"]) == 0
+    # ばんえい側に積まれる
+    assert sum(b["n"] for b in acc["banei"]["total"]) == 3
+    assert sum(b["wins"] for b in acc["banei"]["total"]) == 1
+
+
+def test_accumulate_calib_banei_splits_by_surge(monkeypatch):
+    """ばんえいも急変あり/なしは平地と同じロジックで分ける（粗く3系統のみ）。"""
+    archive, _ = _setup(monkeypatch)
+    acc = archive._empty_calib_set()
+    race = {
+        "venue": "帯広ば",
+        "horses": [{"num": 1}, {"num": 2}, {"num": 3}],
+        "snapshots": [
+            {"slot": "T-45", "odds": [2.0, 10.0, 10.0]},
+            {"slot": "T-8", "odds": [2.0, 3.0, 10.0]},
+        ],
+        "result": [{"pos": 1, "num": 2}, {"pos": 2, "num": 1}],
+    }
+    assert archive._accumulate_calib(acc, race) is True
+    assert sum(b["n"] for b in acc["banei"]["surged"]) == 1
+    assert sum(b["n"] for b in acc["banei"]["calm"]) == 2
+    # 平地の persist/late 等の細分軸はばんえいには存在しない
+    assert "persist" not in acc["banei"]
+
+
+def test_accumulate_calib_banei_place_not_mixed_into_heichi(monkeypatch):
+    """ばんえいの複勝は平地の place 集計に混ぜず素通りする。"""
+    archive, _ = _setup(monkeypatch)
+    acc = archive._empty_calib_set()
+    race = {
+        "venue": "帯広ば",
+        "horses": [{"num": 1}, {"num": 2}],
+        "snapshots": [{"slot": "T-45", "odds": [2.0, 4.0],
+                       "place": [{"lo": 1.1, "hi": 1.4}, {"lo": 1.6, "hi": 2.2}]}],
+        "result": [{"pos": 1, "num": 1}, {"pos": 2, "num": 2}],
+    }
+    assert archive._accumulate_calib(acc, race) is True
+    assert sum(b["n"] for b in acc["place"]["total"]) == 0
+
+
+def test_calibration_doc_exposes_banei_since_first_day(monkeypatch):
+    """calibration.json に banei が出て since が最初の日を示す（既存キーは維持）。"""
+    archive, fake = _setup(monkeypatch)
+    monkeypatch.setattr(archive, "_race", lambda rid: {
+        "race_id": rid, "venue": "帯広ば",
+        "horses": [{"num": 1}, {"num": 2}, {"num": 3}],
+        "snapshots": [{"slot": "T-45", "odds": [1.5, 5.0, 5.0]}],
+        "result": [{"pos": 1, "num": 1}, {"pos": 2, "num": 2}],
+    })
+    archive.run("20260726")
+    doc = _body(fake, "data-bkt", "calibration.json")
+    # 既存の平地較正は影響を受けない（頭数0のためビンは0のまま）
+    assert "total" in doc and "by_surge" in doc
+    assert doc["banei"]["since"] == "20260726"
+    assert set(doc["banei"]) == {"total", "surged", "calm", "since", "n_races"}
+    assert doc["banei"]["n_races"] == 2
+
+
+def test_calibration_doc_omits_banei_before_any_data(monkeypatch):
+    """ばんえいレースが1日も無ければ banei キー自体を出さない。"""
+    archive, fake = _setup(monkeypatch)
+    monkeypatch.setattr(archive, "_race", lambda rid: {
+        "race_id": rid, "venue": "盛岡",
+        "horses": [{"num": 1}, {"num": 2}],
+        "snapshots": [{"slot": "T-45", "odds": [2.0, 4.0]}],
+        "result": [{"pos": 1, "num": 1}],
+    })
+    archive.run("20260726")
+    doc = _body(fake, "data-bkt", "calibration.json")
+    assert "banei" not in doc
 
 
 # ---- 前向き検証ログ（#106） ----
