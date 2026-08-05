@@ -337,7 +337,7 @@ def _parse_profile(cell, rec: dict):
         rec["weight_carried"] = int(mw.group(1))
     # 騎手名: 【】直前のトークン（毛色・斤量・数字を除いた最後の非数字語）
     toks = [t for t in re.split(r"[\s（）]", head) if t]
-    names = [t for t in toks if not re.match(r"^\d+$", t)
+    names = [t for t in toks if not re.match(r"^\d+(\.\d+)?$", t)
              and not _SEXAGE_RE.match(t)]
     if len(names) >= 2:
         rec["jockey"] = names[1]  # [毛色, 騎手] の並び

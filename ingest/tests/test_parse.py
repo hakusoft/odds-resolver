@@ -161,6 +161,18 @@ def test_horse_records_flat_venue():
     assert r["recent"][1]["surface"] == "芝"
 
 
+def test_horse_records_decimal_weight():
+    """斤量が小数表記（実サイトの標準形）でも騎手名を斤量と取り違えない。"""
+    from ingest.parse import parse_horse_records
+    html = _record_html(
+        "牡2 栗毛 54.0 木間龍 （船　橋） 【 0.0% 】 【 0.0% 】 渡邊貴",
+        [])
+    recs = parse_horse_records(html, "船橋")
+    r = recs[0]
+    assert r["weight_carried"] == 54
+    assert r["jockey"] == "木間龍"
+
+
 def test_horse_records_missing_data():
     """欠測堅牢性: 勝率欠落・空の近走でも例外を出さず部分 dict を返す。"""
     from ingest.parse import parse_horse_records
