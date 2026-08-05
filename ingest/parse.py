@@ -247,16 +247,56 @@ def parse_horse_records(html: str, venue: str) -> list[dict] | None:
     records = []
     for tr in rows[1:]:
         cells = tr.find_all(["td", "th"])
-        if len(cells) <= col["num"]:
+        # 1頭分は馬番セルに rowspan（実測 3）が付き、複数 <tr> にまたがる。
+        # find_all("tr") は rowspan を解決しないため、中間行（「持ち時計」等）を
+        # 拾うとセル位置がずれて誤読する。さらに「枠番」セルは同枠に複数頭いる
+        # 場合は代表行にしか出ず rowspan で束ねられるため、2頭目以降の行では
+        # ヘッダー基準の固定インデックス（col["num"]）が1列ズレる。
+        # 実サイトは td/th に class="number" 等の役割名を振っているため、
+        # 引ければそれを優先し、無いフォーマット（テスト用合成 HTML 等）では
+        # 従来どおりヘッダー基準の固定インデックスにフォールバックする。
+        row_col = _row_columns_by_class(cells) or col
+        if "num" not in row_col or len(cells) <= row_col["num"]:
             continue
-        num_txt = cells[col["num"]].get_text(strip=True)
+        num_cell = cells[row_col["num"]]
+        if not num_cell.get("rowspan"):
+            continue
+        num_txt = num_cell.get_text(strip=True)
         if not re.match(r"^\d+$", num_txt):
             continue
-        records.append(_parse_record_row(cells, col, num_txt))
+        records.append(_parse_record_row(cells, row_col, num_txt))
     if not records:
         return None
     records.sort(key=lambda r: r["num"])
     return records
+
+
+_CLASS_TO_ROLE = {
+    "number": "num",
+    "name": "pedigree",
+    "profile": "profile",
+}
+
+
+def _row_columns_by_class(cells) -> dict | None:
+    """行内セルの class 属性から役割 → インデックスを引く。
+
+    枠番セルの省略で列がズレても、class は役割どおりに振られているため
+    影響を受けない。近走セルはヘッダーでは class="lately" 1列だが、データ
+    行では開催場ごとに class="race placeNN" と複数列に展開される（成績列も
+    同じく複数列）。そのため recent_start は「先頭が race クラスの最初の
+    セル」で特定する。class が見つからなければ None（フォールバック指示）。
+    """
+    col = {}
+    for i, c in enumerate(cells):
+        classes = c.get("class") or []
+        for cls in classes:
+            role = _CLASS_TO_ROLE.get(cls)
+            if role and role not in col:
+                col[role] = i
+        if "race" in classes and "recent_start" not in col:
+            col["recent_start"] = i
+    return col or None
 
 
 def _find_record_table(soup):
