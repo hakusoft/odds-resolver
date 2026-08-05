@@ -114,7 +114,9 @@ def test_parse_odds_place_malformed_is_none():
     assert p["place"] == [None, None]
 
 
-# 馬柱パーサ（#55）。合成 HTML で会場非依存・欠測堅牢性を検証する。
+# 馬柱パーサ（#55, #114）。合成 HTML で会場非依存・欠測堅牢性を検証する。
+# 馬番セルには実サイトと同じく rowspan を付ける（#114: rowspan の無い
+# 行は「持ち時計」等の中間行としてスキップされるため、無いと 0 件になる）。
 def _record_html(profile, recent_cells, extra_cols=1):
     """馬柱テーブルの最小 HTML。profile と近走セル列を差し込む。"""
     recent = "".join(f"<td>{c}</td>" for c in recent_cells)
@@ -123,7 +125,7 @@ def _record_html(profile, recent_cells, extra_cols=1):
       <tr><th>枠番</th><th>馬番</th><th>父馬 馬名 母馬</th>
           <th>性齢 毛色 負担重量 騎手名 【勝率】 【3着内率】</th>
           <th>前5走 着順 頭数 競走日 距離</th><th>成績</th></tr>
-      <tr><td>1</td><td>1</td><td>サイア<br>アルファ<br>ダム</td>
+      <tr><td>1</td><td rowspan="3">1</td><td>サイア<br>アルファ<br>ダム</td>
           <td>{profile}</td>{recent}<td>0 0 0</td></tr>
     </table>"""
 
@@ -159,6 +161,39 @@ def test_horse_records_flat_venue():
     assert len(r["recent"]) == 2
     assert r["recent"][0]["distance"] == 1200 and r["recent"][0]["surface"] == "ダ"
     assert r["recent"][1]["surface"] == "芝"
+
+
+def test_horse_records_shared_position_cell():
+    """同一枠に複数頭いる場合、2頭目以降は枠番セルが省略される（#114）。
+
+    実サイトでは枠番セルが同枠の代表行にしか出ず rowspan で束ねられるため、
+    2頭目の <tr> はヘッダー基準の固定インデックスだと1列ズレる。class 属性
+    （number/name/profile/race）を優先して読むことで、ズレの影響を受けずに
+    2頭目も正しく拾えることを確認する。
+    """
+    from ingest.parse import parse_horse_records
+    html = """
+    <table>
+      <tr><th>枠番</th><th>馬番</th><th>父馬 馬名 母馬</th>
+          <th>性齢 毛色 負担重量 騎手名 【勝率】 【3着内率】</th>
+          <th>前5走 着順 頭数 競走日 距離</th><th>成績</th></tr>
+      <tr><td rowspan="6">1</td><td rowspan="3" class="number">1</td>
+          <td class="name">サイア<br>アルファ<br>ダム</td>
+          <td class="profile">牝3 鹿毛 54 田中一 （大井） 【 10.0% 】 【 20.0% 】 佐藤次</td>
+          <td class="race place01">6 10頭 大井 26.07.13 芝S 1200ダ 4人 田中一 54 1:12.0</td>
+          <td>0 0 0</td></tr>
+      <tr><td rowspan="3" class="number">2</td>
+          <td class="name">サイア2<br>ベータ<br>ダム2</td>
+          <td class="profile">牡4 栗毛 56 鈴木三 （大井） 【 15.0% 】 【 30.0% 】 山田四</td>
+          <td class="race place01">3 12頭 大井 26.07.06 芝S 1400芝 2人 鈴木三 56 1:24.0</td>
+          <td>0 0 0</td></tr>
+    </table>"""
+    recs = parse_horse_records(html, "大井")
+    assert [r["num"] for r in recs] == [1, 2]
+    r2 = recs[1]
+    assert r2["name"] == "ベータ" and r2["jockey"] == "鈴木三"
+    assert r2["weight_carried"] == 56
+    assert len(r2["recent"]) == 1
 
 
 def test_horse_records_decimal_weight():
