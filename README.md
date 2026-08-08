@@ -54,4 +54,5 @@ flowchart TB
 
 詳細の持ち場: リソース定義と運用は
 [hakusoft-infra/odds-resolver](https://github.com/hakusoft/hakusoft-infra/tree/main/odds-resolver)、
-取得実装と出力データの配置は `ingest/README.md`、レース ID 体系は `docs/race-id.md`。
+取得実装と出力データの配置は `ingest/README.md`、レース ID 体系は `docs/race-id.md`、
+分析をどう組み立てるかは `docs/analysis-axes.md`。
