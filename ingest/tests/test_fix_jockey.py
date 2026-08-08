@@ -110,6 +110,20 @@ def test_apply_writes_both_buckets(monkeypatch):
         assert recs[1]["jockey"] == "武豊"
 
 
+def test_cache_control_matches_archive(monkeypatch):
+    """書き戻しの Cache-Control は archive が焼くのと同じ値にする。
+
+    ここだけ違うと、直したファイルのキャッシュ挙動が他とズレる。
+    """
+    from ingest.archive import _CC_RACE
+    fix, fake = _setup(monkeypatch)
+    _put(fake, "races/20260731-kw-01.json", DIRTY)
+    fix.run(apply=True)
+    for bucket, key in (("data-bkt", "races/20260731-kw-01.json"),
+                        ("front-bkt", "data/races/20260731-kw-01.json")):
+        assert fake.objects[(bucket, key)]["cc"] == _CC_RACE
+
+
 def test_clean_race_is_not_rewritten(monkeypatch):
     """汚染が無いファイルは put しない（無駄な書き込みと invalidation を避ける）。"""
     fix, fake = _setup(monkeypatch)

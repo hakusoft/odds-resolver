@@ -34,6 +34,7 @@ import sys
 
 import boto3
 
+from ..archive import _CC_RACE
 from ..parse import is_contaminated_jockey
 
 _s3 = None
@@ -95,12 +96,14 @@ def run(date: str | None = None, apply: bool = False) -> dict:
         if not apply:
             continue
         data = json.dumps(race, ensure_ascii=False).encode("utf-8")
-        # archive._put と同じ 2 バケット構成。配信側は data/ 配下。
+        # archive._put と同じ 2 バケット構成・同じ Cache-Control を使う。
+        # ここだけ値が違うと、書き戻したファイルのキャッシュ挙動が archive の
+        # 焼いたものとズレる。
         for bucket, pfx in ((data_bucket, ""), (frontend_bucket, "data/")):
             s3.put_object(
                 Bucket=bucket, Key=pfx + key, Body=data,
                 ContentType="application/json; charset=utf-8",
-                CacheControl="public, max-age=300",
+                CacheControl=_CC_RACE,
             )
     return {"scanned": scanned, "races_fixed": touched, "horses_fixed": horses,
             "applied": apply}
