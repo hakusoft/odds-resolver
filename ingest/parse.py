@@ -9,6 +9,23 @@ from .venues import venue_from_key
 
 _KEY_RE = re.compile(r"/race_card/list/RACEID/(\d{18})")
 
+# 騎手名として数値だけの文字列が入っていたら、それは斤量の取り違え（#112/#118）。
+# 型は正常な文字列なので後段は警告なく騎手名として扱ってしまう。欠測なら弾ける
+# が汚染は弾けないため、パースの時点で落とす。
+_NUMERIC_RE = re.compile(r"^\d+(\.\d+)?$")
+
+
+def is_contaminated_jockey(value) -> bool:
+    """騎手名が数値だけなら汚染（斤量が入り込んでいる）。
+
+    実在する騎手名は 85 種すべて漢字（`▲南部楓` のような減量記号つきを含む）で、
+    数字のみのものは無い。判定に weight_carried との一致を使わないのは、斤量側も
+    壊れている例があるため（実測 1813 件中 16 件が斤量 10〜13 という有り得ない値）。
+    """
+    if value is None:
+        return False
+    return bool(_NUMERIC_RE.match(str(value).strip()))
+
 
 def parse_day_list(html: str, date: str) -> list[dict]:
     """当日開催の一覧から各会場の代表キーと会場名を返す: [{venue, key}]
@@ -379,7 +396,7 @@ def _parse_profile(cell, rec: dict):
     toks = [t for t in re.split(r"[\s（）]", head) if t]
     names = [t for t in toks if not re.match(r"^\d+(\.\d+)?$", t)
              and not _SEXAGE_RE.match(t)]
-    if len(names) >= 2:
+    if len(names) >= 2 and not is_contaminated_jockey(names[1]):
         rec["jockey"] = names[1]  # [毛色, 騎手] の並び
 
 
