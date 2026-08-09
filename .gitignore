@@ -1,0 +1,10 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# 手元の検証用。CI は毎回作り直すのでコミットしない
+.venv/
+
+# macOS
+.DS_Store
