@@ -58,12 +58,14 @@ jobs:
           python-version: "3.13"
 
       # 依存は beautifulsoup4 のみ zip に同梱する（boto3 はランタイム同梱）。
-      # tests は Lambda では不要なので落とす
+      # tests と tools は Lambda では不要なので落とす（tools は手元から回す
+      # 運用スクリプト置き場。S3 を書き換えるものが入るので特に載せない）
       - name: Build zip
         run: |
           mkdir -p build/pkg
           cp -r ingest build/pkg/
-          rm -rf build/pkg/ingest/tests build/pkg/ingest/__pycache__
+          rm -rf build/pkg/ingest/tests build/pkg/ingest/tools \
+                 build/pkg/ingest/__pycache__
           pip install beautifulsoup4 --target build/pkg
           rm -rf build/pkg/*.dist-info build/pkg/__pycache__
           cd build/pkg && zip -qr ../ingest.zip .

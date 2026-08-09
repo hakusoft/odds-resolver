@@ -44,6 +44,37 @@ archive が焼く view と read-api は同一スキーマ（archive が api の�
 | `data/races/{race_id}.json` | レース詳細（馬・全スナップショット・着順 `result`） | 24 時間 |
 | `api/?date=` `api/?id=` | 当日の同スキーマ JSON（DynamoDB 直読み） | 60 秒 |
 
+## tools/ — 手元から回す運用スクリプト
+
+Lambda からは呼ばれない。**一度きりの修復**のように、夜間バッチの経路に混ぜたく
+ないものを置く。
+
+| スクリプト | 役割 | 対応 Issue |
+| --- | --- | --- |
+| `fix_jockey.py` | 汚染した `jockey`（斤量が入っている）を null に落とす | #118 |
+
+置き場を分ける理由: `archive.recalc()` は「races/*.json は読むだけで書き換えない」
+ことを前提に設計されている（#69）。S3 の焼き上がりを**書き換える**経路は夜間
+バッチと性質が違うので、同じモジュールに同居させない。
+
+書き込む系は **既定を dry-run** にし、`--apply` を明示的に付けさせる。
+
+```bash
+export DATA_BUCKET=$(aws lambda get-function-configuration \
+  --function-name odds-resolver-archive \
+  --query 'Environment.Variables.DATA_BUCKET' --output text)
+export FRONTEND_BUCKET=$(aws lambda get-function-configuration \
+  --function-name odds-resolver-archive \
+  --query 'Environment.Variables.FRONTEND_BUCKET' --output text)
+
+python -m ingest.tools.fix_jockey            # 何が変わるか見るだけ
+python -m ingest.tools.fix_jockey --apply    # 実際に書く
+python -m ingest.tools.fix_jockey --verify   # 両バケットを読んで残数を数える
+```
+
+書き戻す時の `Cache-Control` は `archive` の定数を import して揃える。ここだけ
+値が違うと、直したファイルのキャッシュ挙動が他とズレる。
+
 ## テスト
 
 パーサはネットワーク非依存。`tests/` の固定 HTML で検証する。
