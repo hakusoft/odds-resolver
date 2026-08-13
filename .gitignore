@@ -8,3 +8,7 @@ __pycache__/
 
 # macOS
 .DS_Store
+
+# 取得元の実 HTML。再配布を避けるため追跡しない（ingest/.gitignore も参照）。
+# 無い環境では該当テストが pytest.skip される — CI がそれ。
+ingest/tests/fixtures/

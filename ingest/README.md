@@ -78,3 +78,15 @@ python -m ingest.tools.fix_jockey --verify   # 両バケットを読んで残数
 ## テスト
 
 パーサはネットワーク非依存。`tests/` の固定 HTML で検証する。
+
+**`tests/fixtures/` は追跡していない**（取得元の実 HTML なので再配布を避ける）。
+無い環境では該当テストが `pytest.skip` される。CI がまさにそれなので、
+**手元と CI で通るテスト数が違う**。
+
+```
+手元（fixtures あり）: 134 passed
+CI  （fixtures なし）: 130 passed, 4 skipped
+```
+
+差の 4 件はパーサの実 HTML テスト。**CI の緑はこの 4 件を検証していない**ので、
+`parse.py` を触った時は手元で fixtures 込みの結果も確認する。
