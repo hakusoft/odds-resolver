@@ -25,6 +25,7 @@ import boto3
 from boto3.dynamodb.conditions import Key
 
 from . import source
+from .form import is_edge_pick, race_edges
 from .metrics import support_metrics
 from .parse import parse_horse_records, parse_odds, parse_result
 from .surge import detect_surges
@@ -271,6 +272,7 @@ def run(now: float | None = None) -> dict:
     prev = _latest_snapshot_odds(race["race_id"])  # 追記前に前回を取る
     _append_snapshot(race["race_id"], now, parsed, is_final, label)
     _notify_surges(race, prev, parsed, minutes)
+    _record_edges(race, parsed, minutes, now)
     _update_day_after_snapshot(race, parsed, minutes)
     return {"date": date, "picked": race["race_id"],
             "time": jst_hm(now), "slot": label, "final": is_final,
@@ -451,3 +453,77 @@ def _put_result(race_id: str, finish: list[dict], now: float):
 
 def handler(event, context):
     return run()
+
+
+# 乖離スコアを記録する締切前スロット（分）。ここより手前では市場がまだ
+# 値を決めきっていないので、比べても意味が薄い。
+EDGE_SLOT_MINUTES = 10
+
+
+def _record_edges(race: dict, parsed: dict, minutes_to_post: float, now: float):
+    """二軸の乖離が閾値を超えた馬を、**その時点**で記録する（#117 Phase 2-3）。
+
+    #106 の SIGNAL# と同じ狙い。較正は結果を見てから遡るので「良い帯を探して
+    見つけた」以上のことが言えない。ここは**予測が結果より先に確定していた**
+    ことが構造的に保証される記録を作る。
+
+    急変シグナル（SIGNAL#）との違い:
+
+    - 急変はイベント駆動（起きた時だけ）だが、乖離は毎回計算できる。
+      閾値（EDGE_THRESHOLD）を超えた馬だけ書く
+    - 1 レース 1 回だけ書く。毎スロット書くと同じ馬が何度も入り、
+      n が水増しされる。締切間際の 1 点に固定する
+
+    **馬柱（records）が無いレースは記録しない。** 推定できないものを
+    無理に出さない（#117 Phase 1-4）。
+    """
+    from decimal import Decimal
+    rid = race.get("race_id")
+    records = race.get("records")
+    if not rid or not records:
+        return
+    # 締切間際の 1 点だけ。早すぎる時間帯は市場が固まっていない
+    if minutes_to_post > EDGE_SLOT_MINUTES:
+        return
+    if race.get("edge_logged"):
+        return
+
+    edges = race_edges(_undecimalize(records), parsed["odds"],
+                       parsed["horses"])
+    picks = [e for e in edges if is_edge_pick(e["edge"])]
+    race["edge_logged"] = True
+    if not picks:
+        return
+
+    name_of = {int(h["num"]): h.get("name") for h in parsed["horses"]
+               if h.get("num") is not None}
+    for e in picks:
+        num = int(e["num"])
+        _TABLE.put_item(Item={
+            "pk": f"RACE#{rid}",
+            "sk": f"EDGE#{num:02d}",
+            "num": Decimal(num),
+            "name": name_of.get(num),
+            # 判定時点の値。結果は入れない（答え合わせは archive が後日行う）
+            "p_form": Decimal(str(round(e["p_form"], 5))),
+            "p_market": Decimal(str(round(e["p_market"], 5))),
+            "edge": Decimal(str(round(e["edge"], 4))),
+            "form_score": (Decimal(str(round(e["score"], 4)))
+                           if e["score"] is not None else None),
+            "slot_minutes": Decimal(int(minutes_to_post)),
+            "signaled_at": Decimal(str(int(now))),
+            "expires_at": int(now) + _TTL_DAYS * 24 * 3600,
+        })
+
+
+def _undecimalize(v):
+    """DynamoDB の Decimal を float/int に戻す。form は素の数値を前提にする。"""
+    from decimal import Decimal
+    if isinstance(v, list):
+        return [_undecimalize(x) for x in v]
+    if isinstance(v, dict):
+        return {k: _undecimalize(x) for k, x in v.items()}
+    if isinstance(v, Decimal):
+        f = float(v)
+        return int(f) if f.is_integer() else f
+    return v

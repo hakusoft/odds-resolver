@@ -75,9 +75,10 @@ def run(date: str | None = None) -> dict:
     days = _update_days(index)
     _update_calibration(date, day_calib, n_scored, n_banei_scored)
     n_signals = _append_forward_log(date, fetched)
+    n_edges = _append_edge_log(date, fetched)
     return {"date": date, "races": len(index["races"]), "days": len(days),
             "calib_races": n_scored, "banei_races": n_banei_scored,
-            "signals": n_signals}
+            "signals": n_signals, "edges": n_edges}
 
 
 def recalc(date: str) -> dict:
@@ -144,6 +145,54 @@ def _append_forward_log(date: str, races: list[dict]) -> int:
                 "delta": s.get("delta"),
                 "slot_minutes": s.get("slot_minutes"),
                 "signaled_at": s.get("signaled_at"),
+                # --- 結果（後から付けるのはここだけ）---
+                "pos": pos.get(num),
+                "won": pos.get(num) == 1,
+                "top3": pos.get(num) is not None and pos[num] <= 3,
+            })
+    if not rows:
+        return 0
+    _put(key, {"date": date, "n": len(rows), "rows": rows}, _CC_RACE)
+    return len(rows)
+
+
+def _append_edge_log(date: str, races: list[dict]) -> int:
+    """二軸の乖離（edges）に結果を突き合わせ、前向きログへ焼く（#117 Phase 2-3）。
+
+    `_append_forward_log`（#106 の急変シグナル）と同じ構造・同じ理由。fetch が
+    締切前に書いた EDGE# をそのまま持ち込み、着順だけを後から付ける。
+
+    **過去分は作れない。** EDGE# は fetch がその場で書くものなので、遡って
+    生成する経路が無い。これは制約ではなく担保で、「予測が結果より先に確定
+    していた」ことが構造的に保証される。
+
+    `edge/{date}.json` へ **write-once**。既にあれば書かない — 上書きを許すと
+    「後から書き換えていない」という前提が崩れ、検証の値打ちが消える。
+    """
+    key = f"edge/{date}.json"
+    if _exists(key):
+        return 0
+    rows = []
+    for race in races:
+        edges = race.get("edges")
+        if not edges:
+            continue
+        result = race.get("result") or []
+        pos = {r["num"]: r["pos"] for r in result}
+        for e in edges:
+            num = int(e["num"])
+            rows.append({
+                "race_id": race["race_id"],
+                "venue": race.get("venue"),
+                "num": num,
+                "name": e.get("name"),
+                # --- 予測時点（fetch が締切前に確定させた値）---
+                "p_form": e.get("p_form"),
+                "p_market": e.get("p_market"),
+                "edge": e.get("edge"),
+                "form_score": e.get("form_score"),
+                "slot_minutes": e.get("slot_minutes"),
+                "signaled_at": e.get("signaled_at"),
                 # --- 結果（後から付けるのはここだけ）---
                 "pos": pos.get(num),
                 "won": pos.get(num) == 1,

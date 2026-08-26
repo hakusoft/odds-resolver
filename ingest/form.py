@@ -142,20 +142,36 @@ def edge(p_form: float | None, p_market: float | None) -> float | None:
     return math.log(p_form / p_market)
 
 
-def race_edges(records: list[dict], odds: list) -> list[dict]:
+def race_edges(records: list[dict], odds: list,
+                horses: list[dict] | None = None) -> list[dict]:
     """レース単位で二軸を突き合わせる。
 
-    返すのは [{num, score, p_form, p_market, edge}]。odds の並びは records と
-    同じ馬番順であることを前提にする（archive/api が揃えている）。
+    返すのは [{num, score, p_form, p_market, edge}]。
+
+    `horses` を渡した場合は**馬番で突き合わせる**。渡さない場合は odds の並びが
+    records と同じ馬番順である前提で index を使う。位置合わせが崩れると
+    「別の馬の乖離」を静かに返すので、呼び出し側は可能な限り horses を渡すこと。
 
     **馬柱側の推定にオッズは一切入っていない。** ここが二軸が初めて出会う
     場所で、それ以前に混ざっていたら乖離を測る意味が消える。
     """
     forms = race_probabilities(records)
     market = market_probabilities(odds)
+
+    # 馬番 → odds の index。horses があれば並び順に依存しない
+    by_num = {}
+    if horses:
+        by_num = {int(h["num"]): i for i, h in enumerate(horses)
+                  if h.get("num") is not None}
+
     out = []
     for i, f in enumerate(forms):
-        pm = market[i] if i < len(market) else None
+        if by_num:
+            num = f.get("num")
+            j = by_num.get(int(num)) if num is not None else None
+        else:
+            j = i
+        pm = market[j] if j is not None and j < len(market) else None
         out.append({**f, "p_form": f["prob"], "p_market": pm,
                     "edge": edge(f["prob"], pm)})
     return out

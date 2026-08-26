@@ -125,6 +125,13 @@ def _race(rid: str) -> dict:
         out["signals"] = [_plain({k: v for k, v in s.items()
                                   if k not in ("pk", "sk", "expires_at")})
                           for s in signals]
+    # 二軸の乖離（#117 Phase 2-3）。signals と同じく判定時点の値だけを持つ
+    edges = [i for i in items if i["sk"].startswith("EDGE#")]
+    if edges:
+        edges.sort(key=lambda x: x["sk"])
+        out["edges"] = [_plain({k: v for k, v in e.items()
+                                if k not in ("pk", "sk", "expires_at")})
+                        for e in edges]
     return out
 
 
