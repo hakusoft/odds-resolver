@@ -163,6 +163,41 @@ def test_horse_records_flat_venue():
     assert r["recent"][1]["surface"] == "芝"
 
 
+def test_recent_distance_with_turn_direction():
+    """実サイトの近走は "1400右ダ" のように距離と種別の間に方向が入る（#124）。
+
+    方向を許さないと右回り・左回りが軒並み落ち、方向表記の無いばんえい
+    "200ダ" や直線だけが残る。実測でこの欠損が 81.8% あった。
+    """
+    from ingest.parse import parse_horse_records
+    html = _record_html(
+        "牡3 鹿毛 55 中島龍 （金沢） 【 10.0% 】 【 30.0% 】 調教師",
+        ["2 9頭 金沢 26.08.04 ３歳Ｂ７ 1400右ダ 2人 中島龍 55.0 1:35.1",
+         "10 12頭 名古屋 26.07.01 ３歳７ 1500左芝 12人 渡邊竜 55.0 1:39.1"])
+    r = parse_horse_records(html, "金沢")[0]
+    assert len(r["recent"]) == 2
+    assert r["recent"][0]["distance"] == 1400
+    assert r["recent"][0]["surface"] == "ダ"
+    assert r["recent"][1]["distance"] == 1500
+    assert r["recent"][1]["surface"] == "芝"
+
+
+@pytest.mark.parametrize("cell,dist,surf", [
+    ("1 10頭 大井 26.07.13 特別 1400右ダ 1人 騎手 55 1:24.0", 1400, "ダ"),
+    ("1 10頭 大井 26.07.13 特別 1600左芝 1人 騎手 55 1:24.0", 1600, "芝"),
+    ("1 10頭 大井 26.07.13 特別 1000直ダ 1人 騎手 55 1:24.0", 1000, "ダ"),
+    # 方向が無い形（ばんえい・従来から取れていた）も壊さない
+    ("1 10頭 帯広 26.07.13 特別 200ダ 1人 騎手 570 2:24.0", 200, "ダ"),
+    ("1 10頭 大井 26.07.13 特別 1200 芝 1人 騎手 55 1:24.0", 1200, "芝"),
+])
+def test_recent_distance_variants(cell, dist, surf):
+    from ingest.parse import parse_horse_records
+    html = _record_html("牡3 鹿毛 55 騎手 （大井） 【 1.0% 】 【 2.0% 】 師",
+                        [cell])
+    got = parse_horse_records(html, "大井")[0]["recent"][0]
+    assert got["distance"] == dist and got["surface"] == surf
+
+
 def test_horse_records_shared_position_cell():
     """同一枠に複数頭いる場合、2頭目以降は枠番セルが省略される（#114）。
 

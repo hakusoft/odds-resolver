@@ -236,7 +236,10 @@ _SEXAGE_RE = re.compile(r"([牡牝セせん騙]\d+)")
 _PCT_RE = re.compile(r"【\s*([\d.]+)\s*%\s*】")
 _DATE_RE = re.compile(r"(\d{2}\.\d{2}\.\d{2})")
 _POS_FIELD_RE = re.compile(r"^(\d+)\D*?(\d+)\s*頭")
-_DIST_RE = re.compile(r"(\d{3,4})\s*(ダ|芝)")
+# 近走の距離・馬場。実表記は "1400右ダ" のように距離と種別の間に回り方向が
+# 入る（#124）。方向を許さないと右回り・左回りが軒並み落ち、方向表記の無い
+# ばんえい "200ダ" や直線だけが残る（実測 18.2%）。
+_DIST_RE = re.compile(r"(\d{3,4})\s*[右左直]?\s*(ダ|芝)")
 _POP_RE = re.compile(r"(\d+)\s*人")
 _TIME_RE = re.compile(r"(\d{1,2}:\d{2}\.\d)")
 
