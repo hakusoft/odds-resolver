@@ -27,7 +27,8 @@ from boto3.dynamodb.conditions import Key
 from . import source
 from .form import is_edge_pick, race_edges
 from .metrics import support_metrics
-from .parse import parse_horse_records, parse_odds, parse_result
+from .parse import (parse_exotic_matrix, parse_horse_records, parse_odds,
+                    parse_result)
 from .surge import detect_surges
 
 _TABLE = boto3.resource("dynamodb").Table(os.environ["TABLE_NAME"])
@@ -248,9 +249,12 @@ def run(now: float | None = None) -> dict:
 
     picked = _pick(now, races) if races else None
     if picked is None:
-        # 朝の窓の空き時間。当日の馬柱を先に揃え（10:00 のオッズ開始まで
-        # に欲しい）、無ければ前日の着順を回収する（#55 / #52）
-        return _run_record(now, date, races) or _run_result(now, date)
+        # 単複の仕事が無い分の空き。組合せオッズ（#56）を優先するのは、
+        # 締切間際という時間の制約があるため。馬柱と着順回収は朝の窓に
+        # 余裕があり、後回しにしても取り逃さない
+        return (_run_exotic(now, date, races)
+                or _run_record(now, date, races)
+                or _run_result(now, date))
     race, slot, is_final = picked
 
     key = race.get("source_key")
@@ -534,3 +538,64 @@ def _undecimalize(v):
         f = float(v)
         return int(f) if f.is_integer() else f
     return v
+
+
+# 組合せ馬券を取る券種と順序（#56）。馬単と三連複でまず筋を確かめる。
+# 三連単は 617KB/レースと重いので、2 券種の結果を見てから判断する。
+EXOTIC_KINDS = ("umatan", "sanrenfuku")
+
+# 組合せを取る締切前スロット（分）。単勝の乖離（EDGE_SLOT_MINUTES）と
+# 揃える。同じ瞬間の単勝と組合せを比べたいので、時点をずらさない。
+EXOTIC_SLOT_MINUTES = EDGE_SLOT_MINUTES
+
+
+def _pick_exotic(now: float, races: list[dict]) -> tuple[dict, str] | None:
+    """組合せオッズを取るべき (レース, 券種) を返す。無ければ None。
+
+    締切間際の 1 点だけ取る。**1 レース 1 券種 1 回**で、取得済みは
+    DAY 器の exotic_done で追跡する（surged / edge_logged と同じ手口で、
+    直後の put_item に相乗りするので追加の書き込みが要らない）。
+
+    発走済みは取らない。締切を過ぎたオッズは確定値だが、**予測が結果より
+    先に確定していた**という担保が崩れる。
+    """
+    for r in races:
+        if not r.get("source_key"):
+            continue
+        try:
+            post = _post_epoch(r["race_id"][:8], r["post_time"])
+        except Exception:
+            continue
+        minutes = (post - now) / 60.0
+        if minutes <= 0 or minutes > EXOTIC_SLOT_MINUTES:
+            continue
+        done = set(r.get("exotic_done") or [])
+        for kind in EXOTIC_KINDS:
+            if kind not in done:
+                return r, kind
+    return None
+
+
+def _run_exotic(now: float, date: str, races: list[dict]) -> dict | None:
+    """空き時間で組合せオッズを 1 券種取る。無ければ None。
+
+    単複のスロットを圧迫しない。#56 の実測では全 6 券種を各 1 回取っても
+    270 req/日で、1440 の枠に対して余裕がある。
+    """
+    picked = _pick_exotic(now, races)
+    if picked is None:
+        return None
+    race, kind = picked
+    html = source.fetch(source.exotic_path(kind, race["source_key"]))
+    matrix = parse_exotic_matrix(html)
+
+    done = list(race.get("exotic_done") or [])
+    done.append(kind)
+    race["exotic_done"] = done
+    if matrix:
+        # 組は "1-2" のような文字列キーにする（DynamoDB はタプルを持てない）
+        race.setdefault("exotic", {})[kind] = _decimalize(
+            {f"{a}-{b}": v for (a, b), v in matrix.items() if v})
+    _TABLE.put_item(Item=race)
+    return {"date": date, "picked": race["race_id"], "exotic": kind,
+            "pairs": len(matrix) if matrix else 0}
