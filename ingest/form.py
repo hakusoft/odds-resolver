@@ -28,12 +28,21 @@
 **数字が良くなるまで重みを調整することはしない** — それは後から的を描く行為で、
 #106 が実証した罠そのもの。
 """
+import math
 
 # 近走が何走あれば推定してよいか。3 走未満は形が定まらない。
 MIN_RUNS = 3
 
 # 合成の重み。平均着順を主軸に、3 着内率と直近走で補正する。
 W_AVG, W_TOP3, W_LAST = 0.5, 0.3, 0.2
+
+# 素点の下限。全走最下位でも 0 にはしない。
+#
+# 0 を許すと race_probabilities が prob=0 を返し、「この馬は絶対に勝たない」と
+# 言うことになる。実測では prob=0 の馬が 33 頭出て、うち 1 頭が実際に勝った
+# （3.0%）。推定不能な馬に 0 を与えない判断（Phase 1-4）と同じ理由で、
+# 素点 0 も避ける。乖離スコア（log 比）が計算できなくなる実害もある。
+MIN_SCORE = 0.01
 
 
 def _usable(rec: dict) -> list[dict]:
@@ -62,7 +71,8 @@ def form_score(rec: dict) -> float | None:
     avg = sum(_norm_pos(r) for r in runs) / len(runs)
     top3 = sum(1 for r in runs if r["pos"] <= 3) / len(runs)
     last = _norm_pos(runs[0])
-    return W_AVG * (1 - avg) + W_TOP3 * top3 + W_LAST * (1 - last)
+    raw = W_AVG * (1 - avg) + W_TOP3 * top3 + W_LAST * (1 - last)
+    return max(MIN_SCORE, raw)
 
 
 def race_probabilities(records: list[dict]) -> list[dict]:
@@ -97,3 +107,85 @@ def race_probabilities(records: list[dict]) -> list[dict]:
         out.append({"num": r.get("num"), "score": s,
                     "prob": w / denom if denom else 0.0})
     return out
+
+
+# --- 二軸の交差（#117 Phase 2） ---
+
+def market_probabilities(odds: list) -> list[float | None]:
+    """オッズ列を支持率に直す。合計は 1.0（取消・未発売は None）。
+
+    `metrics.support_metrics` と同じ 1/odds の正規化。あちらは top1 と
+    エントロピーだけを返すので、各馬の支持率が要るここで作り直している。
+    """
+    inv = [(1.0 / float(o) if o else 0.0) for o in odds]
+    s = sum(inv)
+    if s <= 0:
+        return [None] * len(odds)
+    return [(x / s if x > 0 else None) for x in inv]
+
+
+def edge(p_form: float | None, p_market: float | None) -> float | None:
+    """乖離スコア = log(p_form / p_market)。二軸の交差点（#117 Phase 2）。
+
+    **正なら馬柱が市場より強く見ている**（市場の過小評価 = 買い候補）、
+    負なら逆。0 を中心に対称。
+
+    対数比を選んだのは、差分だと絶対量なので人気馬の小さな乖離ばかり拾い、
+    「人気薄が実は走る」を取り逃すため。素の比は過小評価が 1〜∞、過大評価が
+    0〜1 と非対称で閾値を置きにくい。定義は数字を見る前に固定した（#117）。
+
+    支持率が無い馬（取消・未発売）は None。市場がまだ値を付けていない状態で
+    乖離は語れない。**クリップはしない** — どこで切るかが後付けの自由度になる。
+    """
+    if not p_form or not p_market:
+        return None
+    return math.log(p_form / p_market)
+
+
+def race_edges(records: list[dict], odds: list) -> list[dict]:
+    """レース単位で二軸を突き合わせる。
+
+    返すのは [{num, score, p_form, p_market, edge}]。odds の並びは records と
+    同じ馬番順であることを前提にする（archive/api が揃えている）。
+
+    **馬柱側の推定にオッズは一切入っていない。** ここが二軸が初めて出会う
+    場所で、それ以前に混ざっていたら乖離を測る意味が消える。
+    """
+    forms = race_probabilities(records)
+    market = market_probabilities(odds)
+    out = []
+    for i, f in enumerate(forms):
+        pm = market[i] if i < len(market) else None
+        out.append({**f, "p_form": f["prob"], "p_market": pm,
+                    "edge": edge(f["prob"], pm)})
+    return out
+
+
+# 妙味ありと見なす乖離スコアの閾値（#117 Phase 2）。
+#
+# edge の分布は 0 中心にならない。馬柱側の推定が市場より平坦なため（市場は
+# 本命に集中し裾が長い、馬柱は近走 3 項目では尖らせきれない）。実測で中央値
+# +0.74、71.5% が正だった。
+#
+# 定義（対数比）は変えずに、**相対閾値**で絞る。1024 レース 9583 頭の分布は
+# 平均 +0.737 / σ 1.184 で、平均 +2σ を採ると 1 日あたり約 6 頭になる。
+#
+#   +1.0σ → 49 頭/日（絞れていない）
+#   +1.5σ → 20 頭/日
+#   +2.0σ →  6 頭/日  ← これを採る
+#   +2.5σ →  1 頭/日（検証の n が貯まらない）
+#
+# 「これというレースを見つけて集中投資する」という方針に対し、1 日 6 頭は
+# 選び抜かれた数。**回収率を見る前に固定した。**
+EDGE_MEAN, EDGE_SD = 0.737, 1.184
+EDGE_THRESHOLD = EDGE_MEAN + 2.0 * EDGE_SD
+
+
+def is_edge_pick(e: float | None) -> bool:
+    """乖離スコアが閾値を超えたか。妙味候補の判定。
+
+    閾値は分布から決めた固定値（EDGE_THRESHOLD）。レースごとに再計算しない
+    のは、その日の出走馬によって基準が動くと日をまたいだ比較ができなくなる
+    ため。分布が変わったら閾値を引き直すが、**検証期間中は動かさない**。
+    """
+    return e is not None and e >= EDGE_THRESHOLD
