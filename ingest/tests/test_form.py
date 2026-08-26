@@ -58,10 +58,23 @@ def test_field_size_is_normalized():
 
 
 def test_score_bounded_0_to_1():
+    from ingest.form import MIN_SCORE
     best = form_score(_rec(1, [(1, 10)] * 5))
     worst = form_score(_rec(2, [(10, 10)] * 5))
     assert best == pytest.approx(1.0)
-    assert worst == pytest.approx(0.0)
+    # 全走最下位でも 0 にしない。0 だと「絶対に勝たない」ことになる
+    assert worst == pytest.approx(MIN_SCORE)
+
+
+def test_worst_horse_still_has_nonzero_probability():
+    """素点 0 を許すと prob=0 になり乖離スコアが計算できない。
+
+    実測では prob=0 の馬が 33 頭出て、うち 1 頭が実際に勝った（3.0%）。
+    """
+    from ingest.form import race_probabilities
+    recs = [_rec(1, [(1, 10)] * 5), _rec(2, [(10, 10)] * 5)]
+    out = race_probabilities(recs)
+    assert all(o["prob"] > 0 for o in out)
 
 
 def test_recency_matters():
@@ -120,3 +133,101 @@ def test_odds_fields_are_ignored():
     with_odds["odds"] = 1.2      # 当該レースのオッズ
     with_odds["support"] = 0.85  # 支持率
     assert form_score(with_odds) == form_score(plain)
+
+
+# --- 二軸の交差（Phase 2） ---
+
+def test_market_probabilities_sum_to_one():
+    from ingest.form import market_probabilities
+    p = market_probabilities([2.0, 4.0, 4.0])
+    assert sum(x for x in p if x) == pytest.approx(1.0)
+    # オッズが低いほど支持率が高い
+    assert p[0] > p[1]
+
+
+def test_market_probabilities_none_for_scratched():
+    from ingest.form import market_probabilities
+    p = market_probabilities([2.0, None, 0.0, 4.0])
+    assert p[1] is None and p[2] is None
+    assert sum(x for x in p if x) == pytest.approx(1.0)
+
+
+def test_market_probabilities_all_missing():
+    from ingest.form import market_probabilities
+    assert market_probabilities([None, None]) == [None, None]
+    assert market_probabilities([]) == []
+
+
+def test_edge_sign_means_direction():
+    """正 = 馬柱が市場より強く見ている（過小評価 = 買い候補）。"""
+    from ingest.form import edge
+    assert edge(0.30, 0.15) > 0    # 馬柱 30% vs 市場 15% → 買い
+    assert edge(0.10, 0.20) < 0    # 馬柱 10% vs 市場 20% → 消し
+    assert edge(0.20, 0.20) == pytest.approx(0.0)
+
+
+def test_edge_is_symmetric_in_log_space():
+    """対数比を選んだ理由。過小評価と過大評価が 0 を中心に対称になる。"""
+    from ingest.form import edge
+    assert edge(0.4, 0.2) == pytest.approx(-edge(0.2, 0.4))
+
+
+def test_edge_treats_ratio_not_difference():
+    """2%→4% と 20%→40% は同じ乖離として扱う（差分ではなく比）。"""
+    from ingest.form import edge
+    assert edge(0.04, 0.02) == pytest.approx(edge(0.40, 0.20))
+
+
+def test_edge_none_when_market_missing():
+    """支持率が無い馬は乖離を語れない。0 除算避けだけが理由ではない。"""
+    from ingest.form import edge
+    assert edge(0.2, None) is None
+    assert edge(0.2, 0.0) is None
+    assert edge(None, 0.2) is None
+    assert edge(0.0, 0.2) is None
+
+
+def test_race_edges_joins_both_axes():
+    from ingest.form import race_edges
+    recs = [_rec(1, [(1, 8)] * 3), _rec(2, [(8, 8)] * 3)]
+    # 市場は 2 番を本命にしている（馬柱は 1 番が上）
+    out = race_edges(recs, [10.0, 1.2])
+    by = {o["num"]: o for o in out}
+    assert by[1]["edge"] > 0   # 馬柱が強く見る馬 = 市場は軽視
+    assert by[2]["edge"] < 0
+    assert by[1]["p_form"] > by[1]["p_market"]
+
+
+def test_race_edges_handles_scratched():
+    from ingest.form import race_edges
+    recs = [_rec(1, [(1, 8)] * 3), _rec(2, [(4, 8)] * 3)]
+    out = race_edges(recs, [2.0, None])
+    assert out[1]["edge"] is None
+    assert out[0]["edge"] is not None
+
+
+def test_race_edges_does_not_feed_odds_into_form():
+    """独立性: オッズを変えても p_form は動かない。
+
+    ここが二軸が初めて出会う場所。それ以前に混ざっていたら乖離が意味を失う。
+    """
+    from ingest.form import race_edges
+    recs = [_rec(1, [(1, 8)] * 3), _rec(2, [(6, 8)] * 3)]
+    a = race_edges(recs, [1.1, 50.0])
+    b = race_edges(recs, [50.0, 1.1])
+    assert [x["p_form"] for x in a] == [x["p_form"] for x in b]
+
+
+def test_edge_threshold_is_two_sigma():
+    """閾値は分布から決めた固定値。回収率を見る前に決めた（#117）。"""
+    from ingest.form import EDGE_MEAN, EDGE_SD, EDGE_THRESHOLD
+    assert EDGE_THRESHOLD == pytest.approx(EDGE_MEAN + 2.0 * EDGE_SD)
+    assert EDGE_THRESHOLD == pytest.approx(3.105, abs=0.01)
+
+
+def test_is_edge_pick_boundary():
+    from ingest.form import EDGE_THRESHOLD, is_edge_pick
+    assert is_edge_pick(EDGE_THRESHOLD) is True
+    assert is_edge_pick(EDGE_THRESHOLD - 0.001) is False
+    assert is_edge_pick(None) is False
+    assert is_edge_pick(-5.0) is False
