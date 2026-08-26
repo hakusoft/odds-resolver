@@ -257,3 +257,60 @@ def test_horse_records_no_table():
     from ingest.parse import parse_horse_records
     assert parse_horse_records("<html><table><tr><td>x</td></tr></table></html>",
                                "大井") is None
+
+
+# 組合せ馬券のオッズ（#56）
+def _matrix_html(headers, rows_data, table_class="dataTable"):
+    """行列オッズの最小 HTML。rows_data は [(2着馬番, [オッズ...])]。"""
+    head = "".join(f"<th>{h}</th>" for h in headers)
+    body = ""
+    for second, odds in rows_data:
+        cells = "".join(f"<td>{second}</td><td>{o}</td>" for o in odds)
+        body += f"<tr>{cells}</tr>"
+    return f'<table class="{table_class}"><tr>{head}</tr>{body}</table>'
+
+
+def test_exotic_matrix_reads_pairs():
+    from ingest.parse import parse_exotic_matrix
+    html = _matrix_html([1, 2], [(1, ["-", "12.3"]), (2, ["45.6", "-"])])
+    m = parse_exotic_matrix(html)
+    # (1着, 2着) のキー。交点は入らない
+    assert m == {(2, 1): 12.3, (1, 2): 45.6}
+
+
+def test_exotic_matrix_zero_becomes_none():
+    """0.0 は「まだ無い」であって「人気が無い」ではない（単勝と同じ扱い）。"""
+    from ingest.parse import parse_exotic_matrix
+    html = _matrix_html([1, 2], [(1, ["-", "0.0"]), (2, ["3.5", "-"])])
+    m = parse_exotic_matrix(html)
+    assert m[(2, 1)] is None
+    assert m[(1, 2)] == 3.5
+
+
+def test_exotic_matrix_merges_split_tables():
+    """列が多いと表が横に分割される。マージしないと最後の列が丸ごと欠ける。
+
+    実測: 9 頭立ての馬単で 1〜8 列目と 9 列目が別テーブルになっており、
+    最初の表だけ読むと 72 組中 64 組しか取れなかった（#56）。
+    """
+    from ingest.parse import parse_exotic_matrix
+    left = _matrix_html([1, 2], [(1, ["-", "10.0"]), (2, ["20.0", "-"])])
+    right = _matrix_html([3], [(1, ["30.0"]), (2, ["40.0"])])
+    m = parse_exotic_matrix(left + right)
+    assert (3, 1) in m and (3, 2) in m      # 分割された側も拾う
+    assert m[(3, 1)] == 30.0 and m[(3, 2)] == 40.0
+    assert len(m) == 4
+
+
+def test_exotic_matrix_ignores_non_numeric_header():
+    """馬名や順位の表は行列ではないので拾わない。"""
+    from ingest.parse import parse_exotic_matrix
+    html = ('<table class="dataTable"><tr><th>順位</th><th>組番</th>'
+            '<th>オッズ</th></tr><tr><td>1</td><td>1-2</td><td>3.5</td></tr>'
+            '<tr><td>2</td><td>1-3</td><td>4.5</td></tr></table>')
+    assert parse_exotic_matrix(html) is None
+
+
+def test_exotic_matrix_returns_none_when_absent():
+    from ingest.parse import parse_exotic_matrix
+    assert parse_exotic_matrix("<html><body>no table</body></html>") is None
