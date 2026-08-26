@@ -497,8 +497,12 @@ def _record_edges(race: dict, parsed: dict, minutes_to_post: float, now: float):
 
     name_of = {int(h["num"]): h.get("name") for h in parsed["horses"]
                if h.get("num") is not None}
+    odds_of = {int(h["num"]): parsed["odds"][i]
+               for i, h in enumerate(parsed["horses"])
+               if h.get("num") is not None and i < len(parsed["odds"])}
     for e in picks:
         num = int(e["num"])
+        o = odds_of.get(num)
         _TABLE.put_item(Item={
             "pk": f"RACE#{rid}",
             "sk": f"EDGE#{num:02d}",
@@ -507,6 +511,9 @@ def _record_edges(race: dict, parsed: dict, minutes_to_post: float, now: float):
             # 判定時点の値。結果は入れない（答え合わせは archive が後日行う）
             "p_form": Decimal(str(round(e["p_form"], 5))),
             "p_market": Decimal(str(round(e["p_market"], 5))),
+            # 素のオッズ。p_market は正規化済みで控除率込みの元値に戻せない
+            # ため、回収率の計算にはこれが要る（判定の前提・#117 Phase 3）
+            "odds": Decimal(str(o)) if o else None,
             "edge": Decimal(str(round(e["edge"], 4))),
             "form_score": (Decimal(str(round(e["score"], 4)))
                            if e["score"] is not None else None),
