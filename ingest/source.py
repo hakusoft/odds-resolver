@@ -42,3 +42,15 @@ def record_path(key: str) -> str:
     # 馬柱は各レースの出馬表ページに載る（race_list と同じ URL 形だが、
     # 会場代表ではなく各レースの key を渡す点が異なる・#55）
     return f"/race_card/list/RACEID/{key}"
+
+
+# 組合せ馬券のオッズ（#56）。単複と同じ RACEID で券種ごとにページが分かれる。
+# 実測では三連単ですら 1 ページに全点が載る（分割ページは無い）。
+_EXOTIC_KINDS = ("umafuku", "umatan", "wide", "sanrenfuku", "sanrentan")
+
+
+def exotic_path(kind: str, key: str) -> str:
+    """券種別オッズのパス。kind は _EXOTIC_KINDS のいずれか。"""
+    if kind not in _EXOTIC_KINDS:
+        raise ValueError(f"unknown kind: {kind}")
+    return f"/odds/{kind}/RACEID/{key}"

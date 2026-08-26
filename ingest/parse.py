@@ -430,3 +430,56 @@ def _parse_recent(cell) -> dict | None:
     if "pos" not in r and "date" not in r:
         return None
     return r
+
+
+# 組合せ馬券のオッズ（#56）。行列形式で載る。
+_PAIR_ODDS_RE = re.compile(r"^\d+(\.\d+)?$")
+
+
+def parse_exotic_matrix(html: str) -> dict | None:
+    """馬単・馬複の行列オッズを {(1着, 2着): odds} で返す（#56）。
+
+    実サイトの表は「列ヘッダー = 1 着馬番」「各行に (2着馬番, オッズ) の
+    ペアが列数ぶん並ぶ」形。同じ馬番の交点は `-`、未発売は `0.0`。
+
+        1     2     3
+      1  -  1 0.0  1 574.5     ← 行内に (2着馬番, オッズ) が繰り返される
+      2 0.0  2  -  2 574.5
+
+    0.0 は None にする（単勝と同じ扱い。発売前は「まだ無い」であって
+    「人気が無い」ではない）。想定外の構造なら None。
+
+    馬複も同じ形で載るが、i<j の片側にしか値が無い点だけ違う。呼び出し側で
+    対称化するかは用途次第なのでここでは触らない。
+
+    **列が多いと表が横に分割される。** 9 頭立ての馬単は 1〜8 列目と 9 列目が
+    別テーブルになっていた。全ての行列テーブルをマージしないと、最後の列が
+    まるごと欠ける（実測で 72 組中 64 組しか取れなかった）。
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    out = {}
+    for table in soup.find_all("table", class_="dataTable"):
+        rows = table.find_all("tr")
+        if len(rows) < 3:
+            continue
+        head = [c.get_text(strip=True) for c in rows[0].find_all(["th", "td"])]
+        if not head or not all(h.isdigit() for h in head):
+            continue  # 1 着馬番のヘッダーでなければ別の表
+        firsts = [int(h) for h in head]
+        for tr in rows[1:]:
+            cells = [c.get_text(strip=True) for c in tr.find_all(["th", "td"])]
+            # (2着馬番, オッズ) のペアが列数ぶん。足りなければ構造が違う
+            if len(cells) < 2 * len(firsts):
+                continue
+            for i, first in enumerate(firsts):
+                num_s, odds_s = cells[2 * i], cells[2 * i + 1]
+                if not num_s.isdigit():
+                    continue
+                second = int(num_s)
+                if first == second:
+                    continue  # 交点（`-`）
+                if not _PAIR_ODDS_RE.match(odds_s):
+                    continue
+                v = float(odds_s)
+                out[(first, second)] = v if v > 0 else None
+    return out or None
