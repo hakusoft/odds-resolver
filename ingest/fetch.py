@@ -247,14 +247,23 @@ def run(now: float | None = None) -> dict:
     date = jst_today(now)
     races = _races_today(date)
 
+    # 組合せオッズ（#56）は単複より先に見る。**空き時間に回すと永久に
+    # 取れない** — 組合せを取りたい締切 10 分前は、単複の勝負どころスロット
+    # （T-10/8/6/4/2）が最も密に並ぶ時間帯で、45 レース開催なら _pick が
+    # ほぼ必ず何かを返す。実運用で 30 分待っても 1 件も取れずに発覚した。
+    #
+    # 優先を逆にできるのは、両者の性質が違うから:
+    #   - 組合せ: 1 レース 1 券種 1 回きり。締切間際でないと意味が無い
+    #   - 単複  : 1 レース 10 スロット。1 つ落ちても他で代替でき、
+    #             取り逃しは closed_slots に明示的な欠測として残る
+    exotic = _run_exotic(now, date, races) if races else None
+    if exotic is not None:
+        return exotic
+
     picked = _pick(now, races) if races else None
     if picked is None:
-        # 単複の仕事が無い分の空き。組合せオッズ（#56）を優先するのは、
-        # 締切間際という時間の制約があるため。馬柱と着順回収は朝の窓に
-        # 余裕があり、後回しにしても取り逃さない
-        return (_run_exotic(now, date, races)
-                or _run_record(now, date, races)
-                or _run_result(now, date))
+        # 単複の仕事も無い分の空き。馬柱と着順回収は朝の窓に余裕がある
+        return _run_record(now, date, races) or _run_result(now, date)
     race, slot, is_final = picked
 
     key = race.get("source_key")
