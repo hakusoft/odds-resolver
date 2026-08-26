@@ -189,6 +189,8 @@ def _append_edge_log(date: str, races: list[dict]) -> int:
                 # --- 予測時点（fetch が締切前に確定させた値）---
                 "p_form": e.get("p_form"),
                 "p_market": e.get("p_market"),
+                # 回収率の計算に要る。p_market からは復元できない
+                "odds": e.get("odds"),
                 "edge": e.get("edge"),
                 "form_score": e.get("form_score"),
                 "slot_minutes": e.get("slot_minutes"),

@@ -26,7 +26,7 @@ RACE = {
     "result": [{"num": 3, "pos": 1}, {"num": 5, "pos": 2}],
     "edges": [
         {"num": 3, "name": "アルファ", "p_form": 0.25, "p_market": 0.05,
-         "edge": 1.61, "form_score": 0.8, "slot_minutes": 8,
+         "odds": 12.4, "edge": 1.61, "form_score": 0.8, "slot_minutes": 8,
          "signaled_at": 1786516034},
         {"num": 9, "name": "ゾーン", "p_form": 0.20, "p_market": 0.04,
          "edge": 1.61, "form_score": 0.7, "slot_minutes": 8,
@@ -55,6 +55,8 @@ def test_edge_log_keeps_prediction_fields(monkeypatch):
     r = body["rows"][0]
     assert r["p_form"] == 0.25 and r["p_market"] == 0.05
     assert r["edge"] == 1.61 and r["slot_minutes"] == 8
+    # 回収率の計算に要る。p_market からは復元できない（#117 Phase 3）
+    assert r["odds"] == 12.4
 
 
 def test_edge_log_is_write_once(monkeypatch):
