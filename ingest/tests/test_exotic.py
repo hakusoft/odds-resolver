@@ -211,3 +211,41 @@ def test_api_omits_exotic_when_absent(monkeypatch):
     monkeypatch.setattr(api, "_query",
                         lambda pk, **kw: [meta] if pk.startswith("DAY#") else [])
     assert "exotic" not in api._race("20260826-oi-01")
+
+
+def test_exotic_runs_before_tanfuku(monkeypatch):
+    """組合せは単複より先に見る。**空き時間に回すと永久に取れない。**
+
+    締切 10 分前は単複の勝負どころスロット（T-10/8/6/4/2）が最も密な
+    時間帯で、_pick がほぼ必ず何かを返す。空き待ちにすると _run_exotic に
+    到達しない（実運用で 30 分待って 1 件も取れずに発覚した）。
+    """
+    f = _fetch_mod(monkeypatch)
+    now = _at("14:55")
+    races = [_race("20260826-oi-01", "15:00")]
+
+    calls = []
+    monkeypatch.setattr(f, "_races_today", lambda d: races)
+    monkeypatch.setattr(f, "_run_exotic",
+                        lambda *a: calls.append("exotic") or {"exotic": "umatan"})
+    monkeypatch.setattr(f, "_pick",
+                        lambda *a: calls.append("pick") or None)
+
+    out = f.run(now)
+    # 単複の候補があっても組合せが先に返る
+    assert calls == ["exotic"]
+    assert out == {"exotic": "umatan"}
+
+
+def test_tanfuku_still_runs_when_no_exotic(monkeypatch):
+    """組合せの仕事が無ければ単複に落ちる（既存の経路を壊さない）。"""
+    f = _fetch_mod(monkeypatch)
+    now = _at("13:00")
+    races = [_race("20260826-oi-01", "15:00")]
+
+    monkeypatch.setattr(f, "_races_today", lambda d: races)
+    monkeypatch.setattr(f, "_run_exotic", lambda *a: None)
+    monkeypatch.setattr(f, "_pick", lambda *a: None)
+    monkeypatch.setattr(f, "_run_record", lambda *a: {"record": 1})
+
+    assert f.run(now) == {"record": 1}
