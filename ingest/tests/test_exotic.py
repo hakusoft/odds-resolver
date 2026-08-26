@@ -105,3 +105,109 @@ def test_exotic_path_rejects_unknown_kind():
     from ingest.source import exotic_path
     with pytest.raises(ValueError):
         exotic_path("tansho", "202608261914060301")
+
+
+# --- 取得の選択ロジック（#56） ---
+
+def _race(rid, post_time, **kw):
+    return {"race_id": rid, "post_time": post_time,
+            "source_key": "20260826" + rid[-4:], **kw}
+
+
+def _at(hhmm, date="20260826"):
+    """JST の HH:MM を epoch に。"""
+    import calendar
+    h, m = (int(x) for x in hhmm.split(":"))
+    y, mo, d = int(date[:4]), int(date[4:6]), int(date[6:8])
+    return calendar.timegm((y, mo, d, h - 9, m, 0, 0, 0, 0))
+
+
+def _fetch_mod(monkeypatch):
+    monkeypatch.setenv("TABLE_NAME", "dummy")
+    import importlib
+    from ingest import fetch
+    importlib.reload(fetch)
+    return fetch
+
+
+def test_pick_exotic_only_near_post(monkeypatch):
+    """締切間際だけ取る。早い時間帯は市場が固まっていない。"""
+    f = _fetch_mod(monkeypatch)
+    races = [_race("20260826-oi-01", "15:00")]
+    assert f._pick_exotic(_at("14:00"), races) is None   # 60 分前
+    assert f._pick_exotic(_at("14:55"), races) is not None  # 5 分前
+
+
+def test_pick_exotic_skips_started_race(monkeypatch):
+    """発走済みは取らない。確定値だが『結果より先』の担保が崩れる。"""
+    f = _fetch_mod(monkeypatch)
+    races = [_race("20260826-oi-01", "15:00")]
+    assert f._pick_exotic(_at("15:01"), races) is None
+
+
+def test_pick_exotic_walks_kinds(monkeypatch):
+    """1 レース 1 券種 1 回。取得済みは飛ばして次の券種へ。"""
+    f = _fetch_mod(monkeypatch)
+    now = _at("14:55")
+    races = [_race("20260826-oi-01", "15:00")]
+    _, first = f._pick_exotic(now, races)
+    assert first == f.EXOTIC_KINDS[0]
+
+    races[0]["exotic_done"] = [f.EXOTIC_KINDS[0]]
+    _, second = f._pick_exotic(now, races)
+    assert second == f.EXOTIC_KINDS[1]
+
+    races[0]["exotic_done"] = list(f.EXOTIC_KINDS)
+    assert f._pick_exotic(now, races) is None
+
+
+def test_pick_exotic_needs_source_key(monkeypatch):
+    f = _fetch_mod(monkeypatch)
+    races = [{"race_id": "20260826-oi-01", "post_time": "15:00"}]
+    assert f._pick_exotic(_at("14:55"), races) is None
+
+
+def test_exotic_slot_matches_edge_slot(monkeypatch):
+    """単勝の乖離と同じ時点で取る。ずらすと同じ瞬間の比較ができない。"""
+    f = _fetch_mod(monkeypatch)
+    assert f.EXOTIC_SLOT_MINUTES == f.EDGE_SLOT_MINUTES
+
+
+def test_api_exposes_exotic(monkeypatch):
+    """組合せオッズが S3 view に焼かれる経路（api の整形を archive が共用）。
+
+    DynamoDB は TTL 2 日なので、焼かないと消える。
+    """
+    from decimal import Decimal
+    monkeypatch.setenv("TABLE_NAME", "dummy")
+    import importlib
+    from ingest import api
+    importlib.reload(api)
+
+    meta = {"race_id": "20260826-oi-01", "venue": "大井", "race_no": Decimal(1),
+            "post_time": "15:00", "name": "テスト", "n_horses": Decimal(8),
+            "surface": "ダ", "distance": Decimal(1200),
+            "exotic": {"umatan": {"1-2": Decimal("12.3")}}}
+
+    def fake_query(pk, **kw):
+        return [meta] if pk.startswith("DAY#") else []
+
+    monkeypatch.setattr(api, "_query", fake_query)
+    out = api._race("20260826-oi-01")
+    assert out["exotic"]["umatan"]["1-2"] == 12.3
+
+
+def test_api_omits_exotic_when_absent(monkeypatch):
+    """取得前のレースには exotic キーを生やさない（欠測を空扱いにしない）。"""
+    from decimal import Decimal
+    monkeypatch.setenv("TABLE_NAME", "dummy")
+    import importlib
+    from ingest import api
+    importlib.reload(api)
+
+    meta = {"race_id": "20260826-oi-01", "venue": "大井", "race_no": Decimal(1),
+            "post_time": "15:00", "name": "テスト", "n_horses": Decimal(8),
+            "surface": "ダ", "distance": Decimal(1200)}
+    monkeypatch.setattr(api, "_query",
+                        lambda pk, **kw: [meta] if pk.startswith("DAY#") else [])
+    assert "exotic" not in api._race("20260826-oi-01")
