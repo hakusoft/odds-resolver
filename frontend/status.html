@@ -170,8 +170,13 @@
         if (!res.ok) throw new Error(res.status);
         s = await res.json();
       } catch (e) {
+        // CloudFront は未配置のパスに index.html を返す（SPA フォールバック）
+        // ため、200 でも JSON でないことがある。初回はまだ焼かれていないだけ
+        // なので、壊れていると誤読させない
         document.getElementById("status").innerHTML =
-          '<span class="warn">status.json が読めない。夜間バッチが焼いていない可能性がある。</span>';
+          '<span class="warn">まだ status.json が無い。</span>' +
+          ' 夜間バッチ（23:30 JST）が最初の 1 本を焼くまで待つ。' +
+          'それ以降も出続けるならバッチを疑う。';
         return;
       }
 
