@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OddsResolver — 状況</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --surface-1: #fbfcfd; --surface-2: #eff1f5;
+      --text-primary: #0b0c0f; --text-secondary: #4f5560;
+      --border: #d6dae1; --accent: #2d539e; --hot: #a02c2c;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --surface-1: #151823; --surface-2: #1e2230;
+        --text-primary: #ffffff; --text-secondary: #b7bfd3;
+        --border: #343a4c; --accent: #84a0c6; --hot: #e27878;
+      }
+    }
+    :root[data-theme="light"] {
+      --surface-1: #fbfcfd; --surface-2: #eff1f5;
+      --text-primary: #0b0c0f; --text-secondary: #4f5560;
+      --border: #d6dae1; --accent: #2d539e; --hot: #a02c2c;
+    }
+    :root[data-theme="dark"] {
+      --surface-1: #151823; --surface-2: #1e2230;
+      --text-primary: #ffffff; --text-secondary: #b7bfd3;
+      --border: #343a4c; --accent: #84a0c6; --hot: #e27878;
+    }
+    :root { --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+    body {
+      margin: 0; background: var(--surface-1); color: var(--text-primary);
+      font-family: system-ui, sans-serif; line-height: 1.5;
+    }
+    main { max-width: 760px; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+    .masthead {
+      display: flex; align-items: center; justify-content: space-between;
+      border-bottom: 1px solid var(--border); padding-bottom: 1rem; margin-bottom: 1.5rem;
+    }
+    .brand { display: flex; align-items: center; gap: 0.6rem; text-decoration: none; color: inherit; }
+    .brand-mark { display: grid; grid-template-columns: repeat(3, 6px); gap: 2px; }
+    .brand-mark span { width: 6px; height: 6px; background: var(--accent); border-radius: 2px; }
+    .brand-mark span:nth-child(3) { background: var(--hot); }
+    .brand h1 { font-size: 1.15rem; margin: 0; font-family: var(--font-mono); letter-spacing: -0.02em; }
+    .theme-btn {
+      background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+      width: 38px; height: 38px; cursor: pointer; color: var(--text-primary); font-size: 1rem;
+    }
+    .theme-btn:hover { border-color: var(--accent); }
+    h2 { font-size: 1.05rem; margin: 0 0 0.3rem; }
+    .sub { color: var(--text-secondary); font-size: 0.85rem; margin: 0 0 1rem; }
+    .chart-wrap { overflow-x: auto; }
+    svg { display: block; }
+    .legend { display: flex; gap: 1.2rem; font-size: 0.8rem; color: var(--text-secondary); margin: 0.8rem 0 0.2rem; }
+    .legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
+    .swatch { width: 11px; height: 11px; border-radius: 3px; }
+    table { border-collapse: collapse; font-size: 0.8rem; margin-top: 1.2rem; width: 100%; }
+    th, td { padding: 0.35rem 0.6rem; border-bottom: 1px solid var(--border); text-align: right; }
+    th:first-child, td:first-child { text-align: left; }
+    thead th { color: var(--text-secondary); font-weight: 600; }
+    td.num { font-family: var(--font-mono); }
+    .pos { color: var(--accent); }
+    .neg { color: var(--hot); }
+    .meta { color: var(--text-secondary); font-size: 0.8rem; margin-top: 1.5rem; }
+    footer { color: var(--text-secondary); font-size: 0.78rem; margin-top: 2rem;
+             border-top: 1px solid var(--border); padding-top: 1rem; }
+    #tooltip {
+      position: fixed; pointer-events: none; opacity: 0; transition: opacity 0.08s;
+      background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+      padding: 0.5rem 0.7rem; font-size: 0.8rem; box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+      z-index: 10; max-width: 240px;
+    }
+    #tooltip .v { font-family: var(--font-mono); font-weight: 700; }
+    #status { color: var(--text-secondary); }
+  </style>
+
+  <style>
+    .cards { display:grid; gap:14px; margin:18px 0 6px;
+             grid-template-columns:repeat(2,1fr); }
+    @media (min-width:900px) { .cards { grid-template-columns:repeat(4,1fr); } }
+    @media (max-width:520px) { .cards { grid-template-columns:1fr; } }
+    .card { background:var(--surface-2); border:1px solid var(--border);
+            border-radius:10px; padding:14px 16px; }
+    .card h3 { margin:0 0 8px; font-size:.78rem; font-weight:600; letter-spacing:.04em;
+               color:var(--text-secondary); text-transform:uppercase; }
+    .big { font-size:1.9rem; font-weight:300; line-height:1.15; }
+    .unit { font-size:.85rem; color:var(--text-secondary); margin-left:4px; }
+    .meta { font-size:.8rem; color:var(--text-secondary); margin-top:6px; }
+    .ok { color:var(--accent); }
+    .warn { color:var(--hot); font-weight:600; }
+    .bar { height:6px; background:var(--border); border-radius:3px; overflow:hidden;
+           margin-top:10px; }
+    .bar > i { display:block; height:100%; background:var(--accent); }
+    table { width:100%; border-collapse:collapse; font-size:.86rem; margin-top:10px; }
+    th, td { padding:7px 8px; border-bottom:1px solid var(--border); text-align:left; }
+    th { color:var(--text-secondary); font-weight:600; font-size:.78rem; }
+    td.num { text-align:right; font-variant-numeric:tabular-nums; }
+    .empty { color:var(--text-secondary); font-size:.86rem; padding:14px 0; }
+    details { margin-top:8px; }
+    summary { cursor:pointer; color:var(--text-secondary); font-size:.84rem; }
+  </style>
+</head>
+
+<body>
+  <main>
+    <div class="masthead">
+      <a class="brand" href="index.html">
+        <span class="brand-mark"><span></span><span></span><span></span><span></span><span></span><span></span></span>
+        <h1>Odds<span style="font-weight:300;opacity:.8">Resolver</span></h1>
+      </a>
+      <button class="theme-btn" id="themetoggle" type="button"></button>
+    </div>
+
+    <h2>今日の状況</h2>
+    <p class="sub">自走している取得・集計が回っているか、検証がどこまで貯まったかを
+      1 画面で見る。<strong>勝率や回収率は出さない</strong> —
+      検証中に毎日眺めると良い日・悪い日で判断が揺れるため（#106）。
+      判定は n が基準に達した時に 1 回だけ行う。</p>
+
+    <p id="status">読み込み中…</p>
+
+    <div class="cards" id="cards"></div>
+
+    <h2 style="margin-top:26px">今日選んだ馬</h2>
+    <p class="sub">二軸（馬柱 × オッズ）の食い違いが閾値を超えた馬。
+      <strong>着順も的中も載せない</strong> — 「今日はこれを選んだ」という記録の表示に留める。</p>
+    <div id="picks"></div>
+
+    <details>
+      <summary>直近の記録ペース</summary>
+      <div id="history"></div>
+    </details>
+  </main>
+
+  <script>
+    const KEY = "or-theme";
+    const root = document.documentElement;
+    const btn = document.getElementById("themetoggle");
+    const saved = localStorage.getItem(KEY);
+    if (saved) root.setAttribute("data-theme", saved);
+    const paint = () => {
+      const dark = root.getAttribute("data-theme") === "dark" ||
+        (!root.getAttribute("data-theme") &&
+         matchMedia("(prefers-color-scheme: dark)").matches);
+      btn.textContent = dark ? "☾" : "☀";
+    };
+    paint();
+    btn.addEventListener("click", () => {
+      const dark = root.getAttribute("data-theme") === "dark" ||
+        (!root.getAttribute("data-theme") &&
+         matchMedia("(prefers-color-scheme: dark)").matches);
+      root.setAttribute("data-theme", dark ? "light" : "dark");
+      localStorage.setItem(KEY, dark ? "light" : "dark");
+      paint();
+    });
+
+    const fmtDate = (s) => s ? `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6)}` : "-";
+
+    function card(title, value, unit, meta, cls) {
+      return `<div class="card"><h3>${title}</h3>
+        <div class="big ${cls || ""}">${value}<span class="unit">${unit || ""}</span></div>
+        ${meta ? `<div class="meta">${meta}</div>` : ""}</div>`;
+    }
+
+    async function load() {
+      let s;
+      try {
+        const res = await fetch("data/status.json?v=" + Date.now());
+        if (!res.ok) throw new Error(res.status);
+        s = await res.json();
+      } catch (e) {
+        document.getElementById("status").innerHTML =
+          '<span class="warn">status.json が読めない。夜間バッチが焼いていない可能性がある。</span>';
+        return;
+      }
+
+      const stale = staleDays(s.date);
+      document.getElementById("status").innerHTML = stale > 1
+        ? `<span class="warn">最終更新 ${fmtDate(s.date)}（${stale} 日前）— バッチが止まっている可能性がある</span>`
+        : `最終更新 ${fmtDate(s.date)}`;
+
+      const e = s.edge || {};
+      const pct = e.target ? Math.min(100, Math.round(e.n / e.target * 100)) : 0;
+      const eta = e.eta_days == null ? "—"
+        : e.eta_days === 0 ? "到達" : `あと ${e.eta_days} 日`;
+      const cov = s.coverage || {};
+
+      document.getElementById("cards").innerHTML = [
+        card("検証の進捗", e.n ?? "—", `/ ${e.target ?? "—"}`,
+             `${eta}（1 日 ${e.per_day ?? "—"} 件ペース）
+              <div class="bar"><i style="width:${pct}%"></i></div>`),
+        card("蓄積した日数", s.days ?? "—", "日",
+             `今日 ${s.races_today ?? "—"} レース`),
+        card("馬柱 / 着順", `${cov.records ?? "—"} / ${cov.results ?? "—"}`, "",
+             "当日レースのうち取得できた数"),
+        card("組合せオッズ", cov.exotic_races ?? "—", "レース",
+             `${(cov.exotic_pairs ?? 0).toLocaleString()} 組`),
+      ].join("");
+
+      const picks = s.picks || [];
+      document.getElementById("picks").innerHTML = picks.length
+        ? `<table><tr><th>会場</th><th>レース</th><th>馬</th>
+             <th class="num">乖離</th><th class="num">馬柱</th><th class="num">市場</th></tr>` +
+          picks.map(p => `<tr>
+             <td>${p.venue ?? "-"}</td>
+             <td>${(p.race_id || "").slice(-2)}R</td>
+             <td>${p.num ?? "-"} ${p.name ?? ""}</td>
+             <td class="num">${p.edge != null ? p.edge.toFixed(2) : "-"}</td>
+             <td class="num">${p.p_form != null ? (p.p_form*100).toFixed(1)+"%" : "-"}</td>
+             <td class="num">${p.p_market != null ? (p.p_market*100).toFixed(1)+"%" : "-"}</td>
+           </tr>`).join("") + "</table>"
+        : '<p class="empty">今日は閾値を超えた馬がいない。妙味のあるレースが毎日あるとは限らない。</p>';
+
+      const hist = e.history || [];
+      document.getElementById("history").innerHTML = hist.length
+        ? `<table><tr><th>日付</th><th class="num">記録</th></tr>` +
+          hist.map(h => `<tr><td>${fmtDate(h.date)}</td>
+            <td class="num">${h.n}</td></tr>`).join("") + "</table>"
+        : '<p class="empty">まだ記録が無い。</p>';
+    }
+
+    function staleDays(d) {
+      if (!d) return 99;
+      const y = +d.slice(0,4), m = +d.slice(4,6), day = +d.slice(6);
+      const then = Date.UTC(y, m-1, day);
+      const now = new Date();
+      const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+      return Math.round((today - then) / 86400000);
+    }
+
+    load();
+  </script>
+</body>
+</html>

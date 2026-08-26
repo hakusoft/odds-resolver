@@ -76,6 +76,7 @@ def run(date: str | None = None) -> dict:
     _update_calibration(date, day_calib, n_scored, n_banei_scored)
     n_signals = _append_forward_log(date, fetched)
     n_edges = _append_edge_log(date, fetched)
+    _update_status(date, index, fetched, days)
     return {"date": date, "races": len(index["races"]), "days": len(days),
             "calib_races": n_scored, "banei_races": n_banei_scored,
             "signals": n_signals, "edges": n_edges}
@@ -592,3 +593,103 @@ def handler(event, context):
     if out.get("races") and date and date != jst_today():
         out["invalidation"] = _invalidate(date)
     return out
+
+
+# 検証の判定基準（#117 Phase 3）。status.json に載せる残数の計算に使う。
+# judge_edge.MIN_N と同じ値。ここを変えるなら向こうも変える。
+_EDGE_TARGET_N = 300
+
+
+def _update_status(date: str, index: dict, races: list[dict],
+                   days: list[dict]) -> dict:
+    """毎日の様子見用サマリを焼く（status.json）。
+
+    毎朝コマンドを打つのは続かないので、**1 ページ見れば済む**形にする。
+    ここは配信用のデータだけを作り、表示は frontend/status.html が受け持つ。
+
+    **率（勝率・回収率）は載せない。** 検証中に毎日眺めると良い日・悪い日で
+    判断が揺れる。#106 がまさにそれを避けるために基準を先に置いた。載せるのは
+    「貯まり具合」と「壊れていないか」だけ。
+
+    edge の n は日別ファイルを全部読まないと出せないので、ここで積み上げて
+    おく。前日ぶんに今日ぶんを足す形にすれば、S3 の list を毎回舐めずに済む。
+    """
+    prev = _load_status()
+    edge_rows = _count_edge_rows(races)
+    n_edge = int(prev.get("edge", {}).get("n", 0)) + edge_rows
+
+    # 直近 7 日の 1 日あたりペースから到達見込みを出す
+    hist = (prev.get("edge", {}).get("history") or [])[-6:]
+    hist.append({"date": date, "n": edge_rows})
+    recent = [h["n"] for h in hist] or [0]
+    per_day = sum(recent) / len(recent)
+    remaining = max(0, _EDGE_TARGET_N - n_edge)
+    eta_days = round(remaining / per_day) if per_day > 0 else None
+
+    exotic = _count_exotic(races)
+    doc = {
+        "date": date,
+        "days": len(days),
+        "races_today": len(index.get("races") or []),
+        # 検証の進捗。率は出さない（#106 の基準どおり）
+        "edge": {"n": n_edge, "target": _EDGE_TARGET_N,
+                 "remaining": remaining, "per_day": round(per_day, 1),
+                 "eta_days": eta_days, "history": hist},
+        # データの貯まり具合
+        "coverage": {
+            "records": _count_with(races, "records"),
+            "results": _count_with(races, "result"),
+            "exotic_races": exotic["races"],
+            "exotic_pairs": exotic["pairs"],
+        },
+        # 今日どの馬を選んだか。**結果は載せない**（記録の表示に留める）
+        "picks": _today_picks(races),
+    }
+    _put("status.json", doc, _CC_DAYS)
+    return doc
+
+
+def _load_status() -> dict:
+    try:
+        res = _get_s3().get_object(Bucket=os.environ["DATA_BUCKET"],
+                                   Key="status.json")
+        return json.loads(res["Body"].read())
+    except Exception:
+        return {}
+
+
+def _count_with(races: list[dict], key: str) -> int:
+    return sum(1 for r in races if r.get(key))
+
+
+def _count_edge_rows(races: list[dict]) -> int:
+    return sum(len(r.get("edges") or []) for r in races)
+
+
+def _count_exotic(races: list[dict]) -> dict:
+    n_races = n_pairs = 0
+    for r in races:
+        ex = r.get("exotic") or {}
+        if not ex:
+            continue
+        n_races += 1
+        n_pairs += sum(len(v or {}) for v in ex.values())
+    return {"races": n_races, "pairs": n_pairs}
+
+
+def _today_picks(races: list[dict]) -> list[dict]:
+    """その日に閾値を超えた馬。**着順も的中も載せない。**
+
+    「今日はこの馬を選んだ」という記録の表示に留める。結果を並べると
+    毎日の当たり外れに引きずられ、判定まで待てなくなる。
+    """
+    out = []
+    for r in races:
+        for e in (r.get("edges") or []):
+            out.append({
+                "race_id": r.get("race_id"), "venue": r.get("venue"),
+                "num": e.get("num"), "name": e.get("name"),
+                "edge": e.get("edge"),
+                "p_form": e.get("p_form"), "p_market": e.get("p_market"),
+            })
+    return sorted(out, key=lambda x: -(x.get("edge") or 0))
