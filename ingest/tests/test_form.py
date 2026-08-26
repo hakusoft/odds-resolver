@@ -231,3 +231,34 @@ def test_is_edge_pick_boundary():
     assert is_edge_pick(EDGE_THRESHOLD - 0.001) is False
     assert is_edge_pick(None) is False
     assert is_edge_pick(-5.0) is False
+
+
+def test_race_edges_matches_by_num_when_horses_given():
+    """horses を渡せば並び順に依存しない。
+
+    odds が馬番順でない場合、index 合わせだと別の馬の乖離を静かに返す。
+    """
+    from ingest.form import race_edges
+    recs = [_rec(1, [(1, 8)] * 3), _rec(2, [(8, 8)] * 3)]
+    # odds は 2 番が先（records と逆順）
+    horses = [{"num": 2}, {"num": 1}]
+    odds = [50.0, 1.1]          # 2番=50倍, 1番=1.1倍
+    out = {o["num"]: o for o in race_edges(recs, odds, horses)}
+    # 1 番は市場でも本命（1.1倍）なので、馬柱が強く見ても edge は小さい
+    assert out[1]["p_market"] > out[2]["p_market"]
+
+
+def test_race_edges_without_horses_uses_index():
+    """horses を渡さない場合は従来どおり index 合わせ（後方互換）。"""
+    from ingest.form import race_edges
+    recs = [_rec(1, [(1, 8)] * 3), _rec(2, [(8, 8)] * 3)]
+    out = race_edges(recs, [1.1, 50.0])
+    assert out[0]["p_market"] > out[1]["p_market"]
+
+
+def test_race_edges_unknown_num_gets_none():
+    """horses に無い馬番は突き合わせられない。黙って別の馬を指さない。"""
+    from ingest.form import race_edges
+    recs = [_rec(7, [(1, 8)] * 3)]
+    out = race_edges(recs, [2.0], [{"num": 1}])
+    assert out[0]["p_market"] is None and out[0]["edge"] is None
