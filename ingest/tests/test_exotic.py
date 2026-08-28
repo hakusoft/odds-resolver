@@ -146,19 +146,25 @@ def test_pick_exotic_skips_started_race(monkeypatch):
 
 
 def test_pick_exotic_walks_kinds(monkeypatch):
-    """1 レース 1 券種 1 回。取得済みは飛ばして次の券種へ。"""
+    """1 レース 1 券種 1 回。取得済みは飛ばして次の券種へ。
+
+    券種の本数に依存しない書き方にしてある（#137 で三連複を外し
+    EXOTIC_KINDS が 1 本になったため）。見たいのは「未取得を順に返し、
+    尽きたら None」であって、何本あるかではない。
+    """
     f = _fetch_mod(monkeypatch)
     now = _at("14:55")
     races = [_race("20260826-oi-01", "15:00")]
-    _, first = f._pick_exotic(now, races)
-    assert first == f.EXOTIC_KINDS[0]
 
-    races[0]["exotic_done"] = [f.EXOTIC_KINDS[0]]
-    _, second = f._pick_exotic(now, races)
-    assert second == f.EXOTIC_KINDS[1]
+    seen = []
+    for _ in f.EXOTIC_KINDS:
+        picked = f._pick_exotic(now, races)
+        assert picked is not None
+        seen.append(picked[1])
+        races[0]["exotic_done"] = list(seen)
 
-    races[0]["exotic_done"] = list(f.EXOTIC_KINDS)
-    assert f._pick_exotic(now, races) is None
+    assert seen == list(f.EXOTIC_KINDS)   # 定義順に、重複なく返る
+    assert f._pick_exotic(now, races) is None   # 尽きたら止まる
 
 
 def test_pick_exotic_needs_source_key(monkeypatch):
