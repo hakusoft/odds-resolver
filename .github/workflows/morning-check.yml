@@ -1,0 +1,73 @@
+name: morning-check
+
+# 朝のチェックの観測部分（#149）。数字を集めて issue にコメントする。
+#
+# **判断はしない。** 事実を並べるだけで、解釈は人間（と Claude）が行う。
+# 判定スクリプト（judge_forward）も recalc も走らせない — 1 回きりで
+# 取り消せない操作は無人環境に置かない（#106 の作法）。
+#
+# AWS へは OIDC で入る。**長期のアクセスキーを持たない。**
+# （claude.ai のルーチンから直接読む案は、鍵を渡す経路が無くて頓挫した・#31）
+
+on:
+  schedule:
+    # 05:57 JST = 20:57 UTC。夜間バッチ（23:30 JST）と朝ジョブ（0:15 JST）の
+    # 後で、開催が始まる前の時間帯。:00 を避けるのは負荷が集中しないように。
+    - cron: "57 20 * * *"
+  workflow_dispatch: # 手動でも回せるように
+
+permissions:
+  id-token: write # OIDC トークンの取得に必要
+  contents: read
+  issues: write # 観測結果を issue にコメントする
+
+# 前の実行が走っていたら待つ。重複してコメントを積まない。
+concurrency:
+  group: morning-check
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13" # Lambda ランタイムに合わせる
+
+      - run: pip install boto3
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::417441750247:role/odds-resolver-github-morning-check
+          aws-region: ap-northeast-1
+
+      # 前回の観測結果を取る。差分の n を併記するために使う。
+      # 無ければ黙って諦める（初回は比較できない、と本文に出る）。
+      - name: Restore previous observation
+        uses: actions/cache/restore@v4
+        with:
+          path: .morning-prev.json
+          key: morning-prev-${{ github.run_id }}
+          restore-keys: morning-prev-
+
+      - name: Collect
+        run: |
+          python -m ingest.tools.morning_probe --json > .morning-now.json
+          python -m ingest.tools.morning_probe --prev .morning-prev.json > body.md
+
+      - name: Comment on the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # #147 は分析の蓄積状況を追う issue。ここに時系列で積む。
+        run: gh issue comment 147 --repo ${{ github.repository }} --body-file body.md
+
+      # 次回の差分用に今回ぶんを残す。cache は 7 日で消えるが、
+      # 毎日走るので実質つながる（切れたら「初回」として扱われるだけ）。
+      - name: Save observation for next run
+        run: cp .morning-now.json .morning-prev.json
+      - uses: actions/cache/save@v4
+        with:
+          path: .morning-prev.json
+          key: morning-prev-${{ github.run_id }}
