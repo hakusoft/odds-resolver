@@ -24,6 +24,7 @@ import datetime
 import json
 import os
 import sys
+from concurrent import futures
 
 import boto3
 
@@ -35,6 +36,10 @@ NAME = "odds-resolver"
 # 33〜71% を正常に上下するため、閾値を置いても異常と区別できない（#145）。
 # T-45 と T-15 は密度によらず 100% を保つので、崩れたら本物の異常。
 WATCH_SLOTS = ["T-45", "T-15"]
+
+# #148 で先に決めた判定基準。**数字を見る前に決めたもので、緩めない。**
+# 緩めるなら検証をやり直す（#106 と同じ作法）。
+JUDGE_MIN_N = 200
 
 
 def jst_today(ts=None):
@@ -174,6 +179,75 @@ def forward_progress(sess, bucket):
             "recent": per[-5:], "latest": keys[-1].split("/")[-1] if keys else None}
 
 
+def judgment_queue(sess, bucket):
+    """検証待ちの仮説が判定基準に達したかを数える（#148）。
+
+    **到達したかを言うだけで、判定はしない。** 判定は 1 回きりで取り消せず、
+    やり直すと「後から的を描く」ことになる（#106 の作法）。人間が手元で行う。
+
+    #148 で先に決めた基準:
+
+    - 対象は B(8-9頭) と C(10-11頭) の 2 区分
+    - **全 7 帯が n≥200** で判定可能
+    - 律速は `0.50-1.00` 帯（全体の 3% しか入らないため・#147）
+    - 区分の境界は検証期間中に動かさない
+
+    帯の定義は `ingest.metrics.calibration_bins` をそのまま使う。ここで
+    別に切ると既存の較正と比較できなくなる。
+    """
+    from ..metrics import CALIB_BINS, calibration_bins
+
+    keys = [k for k in _list_keys(sess, bucket, "races/") if k.endswith(".json")]
+    groups = {"B": (8, 9), "C": (10, 11)}
+    per = {g: [0] * (len(CALIB_BINS) - 1) for g in groups}
+    n_races = collections.Counter()
+
+    def _one(key):
+        try:
+            return _get_json(sess, bucket, key)
+        except Exception:
+            return None
+
+    # 1900 件超を直列で引くと数分かかる。読み取りだけなので並列で問題ない。
+    with futures.ThreadPoolExecutor(max_workers=16) as ex:
+        for d in ex.map(_one, keys):
+            if not d:
+                continue
+            snaps, res = d.get("snapshots") or [], d.get("result")
+            if not snaps or not res:
+                continue
+            odds = snaps[-1].get("odds")
+            if not odds:
+                continue
+            horses = d.get("horses") or []
+            g = next((g for g, (lo, hi) in groups.items()
+                      if lo <= len(horses) <= hi), None)
+            if g is None:
+                continue
+            win_num = next((r["num"] for r in res if r.get("pos") == 1), None)
+            win = next((i for i, h in enumerate(horses)
+                        if h.get("num") == win_num), None)
+            bins = calibration_bins(odds, win)
+            if bins is None:
+                continue
+            n_races[g] += 1
+            for i, x in enumerate(bins):
+                per[g][i] += x["n"]
+
+    out = {}
+    for g in groups:
+        row = per[g]
+        thin = [i for i, n in enumerate(row) if n < JUDGE_MIN_N]
+        out[g] = {
+            "n_races": n_races[g],
+            "limiting_n": row[-1],          # 0.50-1.00 帯（律速）
+            "remaining": max(0, JUDGE_MIN_N - row[-1]),
+            "thin_bins": len(thin),
+            "ready": not thin,
+        }
+    return {"issue": 148, "min_n": JUDGE_MIN_N, "groups": out}
+
+
 def slot_health(sess, bucket, date):
     """勝負どころのスロット取得率（T-45 / T-15）。
 
@@ -220,6 +294,7 @@ def collect():
         "calibration": calibration(sess, bucket),
         "forward": forward_progress(sess, bucket),
         "slots": slot_health(sess, bucket, prev),
+        "judgment": judgment_queue(sess, bucket),
     }
 
 
@@ -247,7 +322,9 @@ def render(o, prev=None):
         r = " / ".join(f"{k} {v:.0%}" for k, v in s["rates"].items())
         L.append(f"- 取得（{s['date']} {s['n_races']}R）: {r} / 組合せ {s['exotic']}")
     L += ["", "### 較正の帯（急変あり）", "",
-          "| 帯 | n | 勝率 | 回収 |" + (" | 前回 n |" if prev else ""),
+          # 区切り行の列数をヘッダーに合わせる。前回 " | 前回 n |" と
+          # 先頭に空白を入れて空セルを作り、表が崩れていた。
+          "| 帯 | n | 勝率 | 回収 |" + (" 前回 n |" if prev else ""),
           "|---|---|---|---|" + ("---|" if prev else "")]
     E, cur = cal["bin_edges"], cal["by_surge"]["surged"]
     old = (prev or {}).get("calibration", {}).get("by_surge", {}).get("surged")
@@ -265,6 +342,21 @@ def render(o, prev=None):
           f"- {fw['days']} 日 / {fw['n']} 頭 / 1日平均 {fw['per_day_avg']}",
           f"- 直近5日 {fw['recent']} / 最新 {fw['latest']}",
           "", "*率は出さない（#106 は判定済み。今は将来の別仮説のための記録）*"]
+    j = o.get("judgment")
+    if j:
+        L += ["", f"### 判定待ち（#{j['issue']}）", "",
+              f"律速は `0.50-1.00` 帯。全 7 帯が n≥{j['min_n']} で判定可能。", "",
+              "| 区分 | R | 律速帯 n | 残り | 薄い帯 |", "|---|---|---|---|---|"]
+        ready = []
+        for g, v in j["groups"].items():
+            L.append(f"| {g} | {v['n_races']} | {v['limiting_n']} | "
+                     f"{v['remaining']} | {v['thin_bins']} |")
+            if v["ready"]:
+                ready.append(g)
+        # **到達したと言うだけ。判定はしない**（1 回きりで取り消せない）。
+        L.append("")
+        L.append(f"**{', '.join(ready)} が基準に達した。判定できる。**"
+                 if ready else "*まだ基準に達していない*")
     return "\n".join(L)
 
 
