@@ -104,3 +104,55 @@ def test_jst_today_is_ahead_of_utc():
     # UTC 2026-09-09 20:00 は JST では翌日
     ts = 1788033600  # 2026-09-09T16:00:00Z 相当でなくても順序だけ見る
     assert len(jst_today(ts)) == 8
+
+
+def _obs_j(ready=False):
+    o = _obs()
+    lim = 200 if ready else 174
+    o["judgment"] = {
+        "issue": 148, "min_n": 200,
+        "groups": {
+            "B": {"n_races": 556, "limiting_n": lim,
+                  "remaining": max(0, 200 - lim),
+                  "thin_bins": 0 if ready else 1, "ready": ready},
+            "C": {"n_races": 784, "limiting_n": 181, "remaining": 19,
+                  "thin_bins": 1, "ready": False},
+        },
+    }
+    return o
+
+
+def test_judge_min_n_is_200():
+    """#148 で数字を見る前に決めた基準。緩めるなら検証をやり直す。"""
+    from ingest.tools.morning_probe import JUDGE_MIN_N
+    assert JUDGE_MIN_N == 200
+
+
+def test_judgment_reports_readiness_but_never_judges():
+    """**到達したと言うだけ。判定はしない**（1 回きりで取り消せない・#106）。"""
+    md = render(_obs_j(ready=True))
+    assert "判定できる" in md
+    # 判定の結果らしき語が出ていないこと
+    for word in ("効果あり", "効果なし", "勝率", "回収率"):
+        assert word not in md.split("### 判定待ち")[1]
+
+
+def test_judgment_not_ready_says_so():
+    md = render(_obs_j(ready=False))
+    assert "まだ基準に達していない" in md
+    assert "判定できる" not in md
+
+
+def test_delta_table_columns_align():
+    """区切り行とヘッダーの列数を揃える（空セルで表が崩れていた）。"""
+    prev = _obs()
+    prev["calibration"]["by_surge"]["surged"] = [
+        {"n": 15, "win_rate": 0.0, "payback": 0.0},
+        {"n": 279, "win_rate": 0.656, "payback": 0.839}]
+    md = render(_obs(), prev)
+    # 較正の表だけを見る（判定待ちの表も "|---" で始まるので節で切る）
+    sec = md.split("### 較正の帯")[1].split("###")[0]
+    rows = [x for x in sec.split("\n") if x.startswith("|")]
+    header, sep = rows[0], rows[1]
+    assert header.count("|") == sep.count("|")
+    assert "| |" not in header  # 空セルを作らない
