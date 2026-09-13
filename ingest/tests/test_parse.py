@@ -314,3 +314,188 @@ def test_exotic_matrix_ignores_non_numeric_header():
 def test_exotic_matrix_returns_none_when_absent():
     from ingest.parse import parse_exotic_matrix
     assert parse_exotic_matrix("<html><body>no table</body></html>") is None
+
+
+# 3 頭券種のオッズ（#137）
+def _triple_table(nums, first):
+    """1 頭目を固定した表 1 枚。**実物の geometry に合わせてある。**
+
+    実物（1 頭目 = 1・10 頭立て）の tbody を再現する:
+
+        行0: th 3..10 / data-grouping 2..9
+        行1: th 4..10 / data-grouping 2..8
+
+    つまり行 j は 3 頭目が others[j+1:] を走り、2 頭目は others を頭から
+    たどる。**1 行の中で 2 頭目が列ごとに変わる**のが要点（行 = 2 頭目
+    ではない）。値は組が判別できるよう first,second,third から作る。
+    """
+    others = [x for x in nums if x != first]
+    rows = ""
+    for j in range(len(others) - 1):
+        cells = ""
+        for idx, third in enumerate(others[j + 1:]):
+            second = others[idx]
+            cells += (f'<th>{third}</th>'
+                      f'<td data-grouping="{second}">{first}{second}.{third}</td>')
+        rows += f"<tr>{cells}</tr>"
+    return ('<table class="dataTable" summary="三連複オッズ">'
+            f"<tbody>{rows}</tbody></table>")
+
+
+def _triple_page(nums):
+    """出走馬 nums の三連複ページ全体（1 頭目ごとに 1 枚）。"""
+    return "".join(_triple_table(nums, f) for f in nums)
+
+
+def test_exotic_triple_reads_sorted_trios():
+    """三連複は昇順 3 頭組のキー。exotic.trio_probabilities と揃う。"""
+    from ingest.parse import parse_exotic_triple
+    m = parse_exotic_triple(_triple_page([1, 2, 3, 4]))
+    assert sorted(m) == [(1, 2, 3), (1, 2, 4), (1, 3, 4), (2, 3, 4)]
+
+
+def test_exotic_triple_maps_axes_from_data_grouping():
+    """`th` が 3 頭目、隣の td の data-grouping が 2 頭目。
+
+    行を 2 頭目と読むと軸が入れ替わる（#137 / #153 で間違えた箇所）。
+    ここは 1 枚だけを対象にしたいので、他の表は組が重ならない別馬番で
+    足して「出走馬の集合」を成立させる（1 枚だけでは 1 頭目が決まらない）。
+    """
+    from ingest.parse import parse_exotic_triple
+    # 1 頭目 = 1 の表 + 出走馬集合を作るためのもう 1 枚（1 頭目 = 2）
+    html = _triple_table([1, 2, 3, 4], 1) + _triple_table([1, 2, 3, 4], 2)
+    m = parse_exotic_triple(html)
+    # 値は fixture が first,second,third から作る。1 頭目 = 1 の表にしか
+    # 無い組で確かめる（両方に出る組は後勝ちで値が変わる）
+    # (1,3,4) は 1 頭目 = 1 の表にしか無い。値 13.4 = first1,second3,third4
+    assert m[(1, 3, 4)] == 13.4
+    # (2,3,4) は 1 頭目 = 2 の表のもの。値 23.4 = first2,second3,third4
+    assert m[(2, 3, 4)] == 23.4
+
+
+def test_exotic_triple_first_horse_from_absent_number():
+    """1 頭目は「その表に現れない出走馬」。表の並び順には頼らない。
+
+    **1 番が取消の 5 頭立てが以前は全滅していた。** 「1 から数えて最初に
+    欠けた番号」で 1 頭目を決めると全ての表が first = 1 になり、出走して
+    いない 1 番のキーに全組が潰れる。点数は 5C3 に一致し conflicts も 0 で、
+    どちらの検査も鳴らないまま誤ラベルになる（#153 のセルフレビューで発見）。
+    """
+    from itertools import combinations
+    from ingest.parse import parse_exotic_triple
+    nums = [2, 3, 4, 5, 6]          # 1 番が取消
+    m = parse_exotic_triple(_triple_page(nums))
+    assert sorted(m) == sorted(combinations(nums, 3))
+    assert all(1 not in k for k in m)      # 出走していない 1 番は現れない
+
+
+def test_exotic_triple_handles_gap_in_numbers():
+    """中抜けの取消（4 番だけ居ない）でも番号を詰めない。"""
+    from itertools import combinations
+    from ingest.parse import parse_exotic_triple
+    nums = [1, 2, 3, 5, 6]
+    m = parse_exotic_triple(_triple_page(nums))
+    assert sorted(m) == sorted(combinations(nums, 3))
+    assert all(4 not in k for k in m)
+
+
+def test_exotic_triple_counts_match_n_choose_3():
+    """10 頭立てで nC3 = 120 点。実ページでも 120/120 を確認済み（#137）。"""
+    from itertools import combinations
+    from ingest.parse import parse_exotic_triple
+    nums = list(range(1, 11))
+    m = parse_exotic_triple(_triple_page(nums))
+    assert len(m) == 120
+    assert sorted(m) == sorted(combinations(nums, 3))
+
+
+def test_exotic_triple_ordered_keeps_finish_order():
+    """三連単は 1着→2着→3着 のままのキー。ソートしない。"""
+    from ingest.parse import parse_exotic_triple
+    m = parse_exotic_triple(_triple_page([1, 2, 3, 4]), ordered=True)
+    # ソートしないので 1 頭目が 1 以外のキーも残る（三連複なら畳まれる）
+    assert (1, 2, 3) in m
+    assert any(k[0] != 1 for k in m)
+    # 同じ 3 頭の別の並びが別キーとして立つ
+    assert len({k for k in m if sorted(k) == [1, 2, 3]}) > 1
+
+
+def test_exotic_triple_zero_becomes_none():
+    """0.0 は「まだ無い」。2 頭券種と同じ扱い。"""
+    from ingest.parse import parse_exotic_triple
+    # 1 頭目 = 1 の表（0.0 を 1 つ含む）と、出走馬集合を作るもう 1 枚
+    t1 = ('<table class="dataTable" summary="三連複オッズ"><tbody><tr>'
+          '<th>3</th><td data-grouping="2">0.0</td>'
+          '<th>4</th><td data-grouping="3">3.5</td>'
+          '</tr></tbody></table>')
+    # 2 枚目は 1 枚目と組が重ならないようにする（重なると後勝ちで上書きされる）
+    t2 = ('<table class="dataTable" summary="三連複オッズ"><tbody><tr>'
+          '<th>4</th><td data-grouping="1">9.2</td>'
+          '</tr></tbody></table>')
+    m = parse_exotic_triple(t1 + t2)
+    assert m[(1, 2, 3)] is None      # 0.0 は None
+    assert m[(1, 3, 4)] == 3.5
+
+
+def test_exotic_triple_reports_value_conflicts():
+    """同じ組に違う値が来たら軸の取り違え。黙って後勝ちにせず報告する。"""
+    from ingest.parse import parse_exotic_triple
+    # 同じ組 (1,2,3) を持つ表を 2 枚、値だけ変えて並べる
+    t1 = ('<table class="dataTable" summary="三連複オッズ"><tbody><tr>'
+          '<th>3</th><td data-grouping="2">1.0</td>'
+          '<th>4</th><td data-grouping="3">2.0</td></tr></tbody></table>')
+    t2 = ('<table class="dataTable" summary="三連複オッズ"><tbody><tr>'
+          '<th>3</th><td data-grouping="1">9.9</td>'
+          '<th>4</th><td data-grouping="3">4.0</td></tr></tbody></table>')
+    seen = []
+    m = parse_exotic_triple(t1 + t2, conflicts=seen)
+    assert seen == [((1, 2, 3), 1.0, 9.9)]
+    assert m[(1, 2, 3)] == 9.9        # 値そのものは後勝ちのまま
+
+
+def test_exotic_triple_no_conflict_when_values_agree():
+    """一致する重複は報告しない（実物は全組が 3 枚に出て、値は同じ）。
+
+    `_triple_page` の値は表ごとに違う（軸の検証用）ので、ここでは実物と
+    同じく **組で決まる値** にした fixture を使う。
+    """
+    from ingest.parse import parse_exotic_triple
+
+    def by_trio(nums):
+        html = ""
+        for first in nums:
+            others = [x for x in nums if x != first]
+            rows = ""
+            for j in range(len(others) - 1):
+                cells = ""
+                for idx, third in enumerate(others[j + 1:]):
+                    second = others[idx]
+                    v = 10 + sum(sorted((first, second, third)))  # 組で決まる
+                    cells += (f'<th>{third}</th>'
+                              f'<td data-grouping="{second}">{v}.0</td>')
+                rows += f"<tr>{cells}</tr>"
+            html += ('<table class="dataTable" summary="三連複オッズ">'
+                     f"<tbody>{rows}</tbody></table>")
+        return html
+
+    seen = []
+    m = parse_exotic_triple(by_trio([1, 2, 3, 4, 5]), conflicts=seen)
+    assert seen == []                 # 値が一致する重複は報告しない
+    assert m[(1, 2, 3)] == 16.0       # 10 + 1+2+3
+
+
+def test_exotic_triple_ignores_table_without_data_grouping():
+    """data-grouping が無い表は 2 頭目が決まらないので読まない。
+
+    「人気順」「高配当順」の一覧表（組番が "1-2-3" の文字列で載る）を
+    行列と誤認しないため。
+    """
+    from ingest.parse import parse_exotic_triple
+    html = ('<table class="dataTable"><tbody><tr><th>1</th>'
+            '<td>1-2-3</td><td>3.5</td></tr></tbody></table>')
+    assert parse_exotic_triple(html) is None
+
+
+def test_exotic_triple_returns_none_when_absent():
+    from ingest.parse import parse_exotic_triple
+    assert parse_exotic_triple("<html><body>no table</body></html>") is None

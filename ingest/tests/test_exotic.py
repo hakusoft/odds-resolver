@@ -179,6 +179,55 @@ def test_exotic_slot_matches_edge_slot(monkeypatch):
     assert f.EXOTIC_SLOT_MINUTES == f.EDGE_SLOT_MINUTES
 
 
+# 点数の突き合わせ（#137）
+def test_shortfall_none_when_complete(monkeypatch):
+    """全組揃っていれば報告しない。"""
+    from itertools import combinations, permutations
+    f = _fetch_mod(monkeypatch)
+    trio = {c: 1.5 for c in combinations(range(1, 9), 3)}      # 8C3 = 56
+    assert f._exotic_shortfall("sanrenfuku", trio) is None
+    tan = {p: 1.5 for p in permutations(range(1, 9), 3)}       # 8P3 = 336
+    assert f._exotic_shortfall("sanrentan", tan) is None
+    pair = {p: 1.5 for p in permutations(range(1, 9), 2)}      # 8*7 = 56
+    assert f._exotic_shortfall("umatan", pair) is None
+
+
+def test_shortfall_catches_the_137_mislabel(monkeypatch):
+    """#137 の誤ラベルはこの検査で落ちる。
+
+    14 頭立ての三連複で期待 364 点に対し 53 点しか保存されていなかった。
+    件数だけ見ても気づけなかったのが #137 の教訓なので、期待値との
+    突き合わせを機械で回す。
+    """
+    f = _fetch_mod(monkeypatch)
+    # 2 頭キーで 53 件保存された当時の形（キーの馬番は 14 頭ぶん現れる）
+    pairs = [(x, y) for x in range(1, 15) for y in range(1, 15) if x != y]
+    got = {p: 1.5 for p in pairs[:53]}
+    short = f._exotic_shortfall("sanrenfuku", got)
+    assert short is not None
+    assert short["expect"] == 364      # 14C3
+    assert short["got"] == 53
+
+
+def test_shortfall_counts_n_from_keys_not_max(monkeypatch):
+    """n は馬番の種類数で数える。最大値だと取消馬が居る時に過大になる。
+
+    馬番 1,2,3,5 の 4 頭立て（4 番が取消）なら期待は 4C3 = 4。
+    最大値 5 を n とすると 5C3 = 10 になり、正常な取得を欠測と誤る。
+    """
+    from itertools import combinations
+    f = _fetch_mod(monkeypatch)
+    trio = {c: 1.5 for c in combinations([1, 2, 3, 5], 3)}
+    assert f._exotic_shortfall("sanrenfuku", trio) is None
+
+
+def test_shortfall_ignores_empty(monkeypatch):
+    """取得できなかった場合は shortfall ではなく欠測。区別する。"""
+    f = _fetch_mod(monkeypatch)
+    assert f._exotic_shortfall("sanrenfuku", None) is None
+    assert f._exotic_shortfall("sanrenfuku", {}) is None
+
+
 def test_api_exposes_exotic(monkeypatch):
     """組合せオッズが S3 view に焼かれる経路（api の整形を archive が共用）。
 

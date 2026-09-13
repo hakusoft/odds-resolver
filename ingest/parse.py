@@ -483,3 +483,87 @@ def parse_exotic_matrix(html: str) -> dict | None:
                 v = float(odds_s)
                 out[(first, second)] = v if v > 0 else None
     return out or None
+
+
+def parse_exotic_triple(html: str, ordered: bool = False,
+                        conflicts: list | None = None) -> dict | None:
+    """三連複・三連単の行列オッズを {(a, b, c): odds} で返す（#137）。
+
+    3 頭券種は **「1 頭目を固定した表」が出走頭数ぶん並ぶ** 形で載る。
+    1 枚の中の読み方は parse_exotic_matrix とは違うので流用できない。
+
+    実物の 1 枚（1 頭目 = 1・10 頭立て）の tbody:
+
+        <th>3</th><td data-grouping="2">0.0</td>   ← 組 (1, 2, 3)
+        <th>4</th><td data-grouping="3">0.0</td>   ← 組 (1, 3, 4)
+        <th>5</th><td data-grouping="4">0.0</td>   ← 組 (1, 4, 5)
+        ...（1 行に 8 列ぶん並び、余りは空 td で埋まる）
+
+    **`th` が 3 頭目、隣の td の `data-grouping` が 2 頭目。**
+    thead の列見出しが 2 頭目の番号に対応しており、data-grouping はその
+    列番号を指す。1 行の中で 2 頭目が列ごとに変わる点に注意（行 = 2 頭目
+    ではない）。行が進むと 3 頭目の始まりが 1 つ繰り上がり、`th` の数が
+    減って三角形になる。**td は常に 8 個**で、余りは空セル。
+
+    ordered=False（三連複）はキーをソートして組にする。ordered=True
+    （三連単）は 1着→2着→3着 のままのタプルにする。
+
+    **1 頭目は「その表に現れない出走馬」で決める。** 各表には自分以外の
+    出走馬が 2 頭目・3 頭目として現れるので、出走馬の集合から引けば
+    1 頭だけ残る。出走馬の集合は全ての表に現れた番号の和で作る（取消馬は
+    どの表にも出ないので自然に除かれる）。
+
+    **表の並び順に頼らない。** 「n 枚目 = n 番」は取消があると崩れる。
+
+    0.0 は None（parse_exotic_matrix と同じ。発売前は「まだ無い」）。
+    想定外の構造なら None。
+
+    **三連複は同じ組が 3 枚に現れる。** 組 (1,2,3) は 1 頭目 = 1 / 2 / 3 の
+    表に出る。実物は同じ値なので後勝ちで構わないが、**値が食い違ったら
+    軸の取り違えを疑う**。食い違いは黙って潰さず `conflicts` へ積む。
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    tables = []
+    for table in soup.find_all("table", class_="dataTable"):
+        body = table.find("tbody") or table
+        cells = []          # (3頭目, 2頭目, オッズ文字列)
+        for tr in body.find_all("tr"):
+            kids = tr.find_all(["th", "td"])
+            for i in range(len(kids) - 1):
+                a, b = kids[i], kids[i + 1]
+                if a.name != "th" or b.name != "td":
+                    continue
+                third_s = a.get_text(strip=True)
+                dg = (b.get("data-grouping") or "").strip()
+                odds_s = b.get_text(strip=True)
+                if not third_s.isdigit() or not dg.isdigit():
+                    continue
+                if not _PAIR_ODDS_RE.match(odds_s):
+                    continue
+                cells.append((int(third_s), int(dg), odds_s))
+        if cells:
+            tables.append(cells)
+    if not tables:
+        return None
+
+    # 出走馬 = 全ての表に現れた番号の和。取消はどの表にも出ない
+    running = {x for cells in tables for c in cells for x in c[:2]}
+
+    out = {}
+    for cells in tables:
+        seen = {x for c in cells for x in c[:2]}
+        missing = running - seen
+        if len(missing) != 1:
+            continue  # 1 頭に絞れない = 構造が想定と違う。この表は読まない
+        first = missing.pop()
+        for third, second, odds_s in cells:
+            trio = (first, second, third)
+            if len(set(trio)) != 3:
+                continue
+            v = float(odds_s)
+            v = v if v > 0 else None
+            key = trio if ordered else tuple(sorted(trio))
+            if conflicts is not None and key in out and out[key] != v:
+                conflicts.append((key, out[key], v))
+            out[key] = v
+    return out or None
