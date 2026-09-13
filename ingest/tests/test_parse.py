@@ -314,3 +314,153 @@ def test_exotic_matrix_ignores_non_numeric_header():
 def test_exotic_matrix_returns_none_when_absent():
     from ingest.parse import parse_exotic_matrix
     assert parse_exotic_matrix("<html><body>no table</body></html>") is None
+
+
+# 3 頭券種のオッズ（#137）
+def _triple_html(seconds, rows_data):
+    """3 頭券種 1 枚ぶんの最小 HTML（1 頭目が固定された表）。
+
+    seconds はヘッダー（2 頭目の並び）。1 頭目は「ヘッダーに現れない最小の
+    番号」として暗黙に決まる。rows_data は [[(3頭目, オッズ), ...], ...] で
+    ヘッダーと同じ順。**行ごとに長さが違ってよい**（実物は三角形に減る）。
+    """
+    head = "".join(f"<th>{h}</th>" for h in seconds)
+    body = ""
+    for pairs in rows_data:
+        cells = "".join(f"<td>{t}</td><td>{o}</td>" for t, o in pairs)
+        body += f"<tr>{cells}</tr>"
+    return f'<table class="dataTable"><tr>{head}</tr>{body}</table>'
+
+
+def test_exotic_triple_reads_sorted_trios():
+    """三連複は昇順 3 頭組のキー。exotic.trio_probabilities と揃う。"""
+    from ingest.parse import parse_exotic_triple
+    # 1 頭目 = 1（ヘッダーに無い最小）。2 頭目 = 2 の行に 3 頭目 3,4
+    html = _triple_html([2, 3], [[(3, "12.3"), (4, "45.6")], [(4, "78.9")]])
+    m = parse_exotic_triple(html)
+    assert m == {(1, 2, 3): 12.3, (1, 2, 4): 45.6, (1, 3, 4): 78.9}
+
+
+def test_exotic_triple_first_horse_is_smallest_missing():
+    """1 頭目はヘッダーに現れない最小の番号。
+
+    差分（(ヘッダー ∪ 本文) − ヘッダー）では求まらない。本文には他の全馬番が
+    出るので常に最大番号を拾ってしまう（実測 120 点中 64 点・#137）。
+    ここでは 1 頭目 = 2 の表（ヘッダーに 1 が有り 2 が無い）で確かめる。
+    """
+    from ingest.parse import parse_exotic_triple
+    html = _triple_html([1, 3], [[(3, "10.0"), (4, "20.0")], [(4, "30.0")]])
+    m = parse_exotic_triple(html)
+    # 1 頭目は 2。最大番号の 4 ではない
+    assert m == {(1, 2, 3): 10.0, (1, 2, 4): 20.0, (2, 3, 4): 30.0}
+
+
+def test_exotic_triple_rows_are_triangular():
+    """行の長さは固定でない。固定長を前提にすると大半の行を捨てる。
+
+    実測: `len(cells) < 2 * len(header)` で弾く実装だと 120 点中 22 点
+    しか取れなかった（#137）。
+    """
+    from ingest.parse import parse_exotic_triple
+    html = _triple_html(
+        [2, 3, 4],
+        [[(3, "1.0"), (4, "2.0"), (5, "3.0")],   # 3 ペア
+         [(4, "4.0"), (5, "5.0")],               # 2 ペア
+         [(5, "6.0")]])                          # 1 ペア
+    m = parse_exotic_triple(html)
+    assert len(m) == 6                            # 短い行も全て拾う
+    assert m[(1, 4, 5)] == 6.0                    # 最後の 1 ペアも入る
+
+
+def test_exotic_triple_merges_tables_per_first_horse():
+    """1 頭目ごとに表が分かれる。全ての表をマージする。
+
+    **三連複では同じ組が複数の表に現れる。** 組 (1,2,3) は 1 頭目 = 1 の表
+    にも 2 の表にも 3 の表にも出る。実物では同じ値なので後勝ちで問題ない
+    （食い違う場合は conflicts で拾える）。
+    """
+    from ingest.parse import parse_exotic_triple
+    first1 = _triple_html([2, 3], [[(3, "1.0")], [(4, "2.0")]])
+    first2 = _triple_html([1, 3], [[(3, "1.0")], [(4, "4.0")]])
+    m = parse_exotic_triple(first1 + first2)
+    assert m[(1, 2, 3)] == 1.0        # 両方の表にあり、値は一致
+    assert m[(1, 3, 4)] == 2.0        # 1 頭目 = 1 だけにある組
+    assert m[(2, 3, 4)] == 4.0        # 1 頭目 = 2 だけにある組
+    assert len(m) == 3
+
+
+def test_exotic_triple_reports_value_conflicts():
+    """同じ組に違う値が来たら軸の取り違え。黙って後勝ちにせず報告する。"""
+    from ingest.parse import parse_exotic_triple
+    first1 = _triple_html([2, 3], [[(3, "1.0")], [(4, "2.0")]])
+    first2 = _triple_html([1, 3], [[(3, "9.9")], [(4, "4.0")]])   # (1,2,3) が違う
+    seen = []
+    m = parse_exotic_triple(first1 + first2, conflicts=seen)
+    assert seen == [((1, 2, 3), 1.0, 9.9)]
+    assert m[(1, 2, 3)] == 9.9        # 値そのものは後勝ちのまま
+
+
+def test_exotic_triple_no_conflict_when_values_agree():
+    """一致する重複は報告しない（実物は全組が 3 枚に出る）。"""
+    from ingest.parse import parse_exotic_triple
+    first1 = _triple_html([2, 3], [[(3, "1.0")], [(4, "2.0")]])
+    first2 = _triple_html([1, 3], [[(3, "1.0")], [(4, "4.0")]])
+    seen = []
+    parse_exotic_triple(first1 + first2, conflicts=seen)
+    assert seen == []
+
+
+def test_exotic_triple_ordered_keeps_finish_order():
+    """三連単は着順のままのキー。ソートしない。"""
+    from ingest.parse import parse_exotic_triple
+    html = _triple_html([2, 3], [[(3, "12.3")], [(2, "45.6")]])
+    m = parse_exotic_triple(html, ordered=True)
+    assert m == {(1, 2, 3): 12.3, (1, 3, 2): 45.6}
+
+
+def test_exotic_triple_zero_becomes_none():
+    """0.0 は「まだ無い」。2 頭券種と同じ扱い。"""
+    from ingest.parse import parse_exotic_triple
+    html = _triple_html([2], [[(3, "0.0"), (4, "3.5")]])
+    m = parse_exotic_triple(html)
+    assert m[(1, 2, 3)] is None
+    assert m[(1, 2, 4)] == 3.5
+
+
+def test_exotic_triple_skips_duplicate_numbers():
+    """同じ馬番が 2 つ入る組は交点相当。落とす。"""
+    from ingest.parse import parse_exotic_triple
+    html = _triple_html([2], [[(2, "9.9"), (1, "8.8"), (3, "7.7")]])
+    m = parse_exotic_triple(html)
+    assert m == {(1, 2, 3): 7.7}      # (1,2,2) と (1,2,1) は入らない
+
+
+def test_exotic_triple_ignores_non_numeric_header():
+    from ingest.parse import parse_exotic_triple
+    html = ('<table class="dataTable"><tr><th>順位</th><th>組番</th>'
+            '<th>オッズ</th></tr><tr><td>1</td><td>1-2-3</td>'
+            '<td>3.5</td></tr></table>')
+    assert parse_exotic_triple(html) is None
+
+
+def test_exotic_triple_returns_none_when_absent():
+    from ingest.parse import parse_exotic_triple
+    assert parse_exotic_triple("<html><body>no table</body></html>") is None
+
+
+def test_exotic_triple_counts_match_n_choose_3():
+    """n 頭立ての全組が nC3 点になる。#137 の誤ラベルはここで落ちる。"""
+    from itertools import combinations
+    from ingest.parse import parse_exotic_triple
+    n = 8
+    html = ""
+    for first in range(1, n + 1):
+        seconds = [x for x in range(1, n + 1) if x != first]
+        rows = []
+        for b in seconds:
+            rows.append([(c, "1.5") for c in range(1, n + 1)
+                         if c not in (first, b)])
+        html += _triple_html(seconds, rows)
+    m = parse_exotic_triple(html)
+    assert len(m) == len(list(combinations(range(1, n + 1), 3)))   # 56
+    assert all(len(k) == 3 and list(k) == sorted(k) for k in m)

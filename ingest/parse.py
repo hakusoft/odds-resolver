@@ -483,3 +483,69 @@ def parse_exotic_matrix(html: str) -> dict | None:
                 v = float(odds_s)
                 out[(first, second)] = v if v > 0 else None
     return out or None
+
+
+def parse_exotic_triple(html: str, ordered: bool = False,
+                        conflicts: list | None = None) -> dict | None:
+    """三連複・三連単の行列オッズを {(a, b, c): odds} で返す（#137）。
+
+    3 頭券種は **「1 頭目を固定した 2 次元行列」が n 枚並ぶ** 形で載る。
+    parse_exotic_matrix と同じ考え方で読めるが、軸が 1 つ増える。
+
+        dataTable[1]  1頭目 = 1   ヘッダー: 2 3 4 5 …   ← 2 頭目
+          row1 (2頭目=2): (3,x)(4,x)(5,x)…              ← ペアは (3頭目, オッズ)
+          row2 (2頭目=3): (4,x)(5,x)…                   ← 三角形に減る
+        dataTable[2]  1頭目 = 2   ヘッダー: 1 3 4 5 …
+
+    ordered=False（三連複）はキーをソートして組にする。ordered=True
+    （三連単）は着順そのままのタプルにする。
+
+    **三連複は同じ組が複数の表に現れる。** 組 (1,2,3) は 1 頭目 = 1 / 2 / 3 の
+    3 枚に出る。実物は同じ値なので後勝ちで構わないが、**値が食い違ったら
+    軸の取り違えを疑う**（#137 で 2 度間違えた箇所）。食い違いは黙って
+    潰さずに `conflicts` へ積んで呼び出し側から見えるようにする。
+
+    0.0 は None（parse_exotic_matrix と同じ。発売前は「まだ無い」）。
+    想定外の構造なら None。
+
+    **1 頭目はヘッダーに現れない最小の番号で決める。** 「(ヘッダー ∪ 本文)
+    − ヘッダー」の差分では求まらない（本文には他の全馬番が出るので、常に
+    最大番号を拾ってしまう。実測 64/120 しか取れなかった）。
+
+    **行の長さを固定と仮定しない。** セル数が行ごとに減る（16→15→14…）ため、
+    `len(cells) < 2 * len(header)` で弾くと大半の行を捨てる（実測 22/120）。
+    ここが parse_exotic_matrix と違う唯一の点。
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    out = {}
+    for table in soup.find_all("table", class_="dataTable"):
+        rows = table.find_all("tr")
+        if len(rows) < 2:
+            continue
+        head = [c.get_text(strip=True) for c in rows[0].find_all(["th", "td"])]
+        if not head or not all(h.isdigit() for h in head):
+            continue  # 2 頭目のヘッダーでなければ別の表
+        seconds = [int(h) for h in head]
+        # ヘッダーに欠けている最小の番号がこの表の 1 頭目
+        first = next(x for x in range(1, max(seconds) + 2) if x not in seconds)
+        for j, tr in enumerate(rows[1:]):
+            if j >= len(seconds):
+                break  # 行がヘッダーより多い = 想定外。読める分だけ残す
+            second = seconds[j]
+            cells = [c.get_text(strip=True) for c in tr.find_all(["th", "td"])]
+            for i in range(0, len(cells) - 1, 2):
+                num_s, odds_s = cells[i], cells[i + 1]
+                if not num_s.isdigit():
+                    continue
+                if not _PAIR_ODDS_RE.match(odds_s):
+                    continue
+                trio = (first, second, int(num_s))
+                if len(set(trio)) != 3:
+                    continue  # 同じ馬番の重複（交点相当）
+                v = float(odds_s)
+                v = v if v > 0 else None
+                key = trio if ordered else tuple(sorted(trio))
+                if conflicts is not None and key in out and out[key] != v:
+                    conflicts.append((key, out[key], v))
+                out[key] = v
+    return out or None

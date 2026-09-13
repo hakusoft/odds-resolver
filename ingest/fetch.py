@@ -27,8 +27,8 @@ from boto3.dynamodb.conditions import Key
 from . import source
 from .form import is_edge_pick, race_edges
 from .metrics import support_metrics
-from .parse import (parse_exotic_matrix, parse_horse_records, parse_odds,
-                    parse_result)
+from .parse import (parse_exotic_matrix, parse_exotic_triple,
+                    parse_horse_records, parse_odds, parse_result)
 from .surge import detect_surges
 
 _TABLE = boto3.resource("dynamodb").Table(os.environ["TABLE_NAME"])
@@ -549,17 +549,19 @@ def _undecimalize(v):
     return v
 
 
+# 3 頭券種。parse_exotic_triple で読む（#137）。2 頭券種とページ構造が違う。
+TRIPLE_KINDS = ("sanrenfuku", "sanrentan")
+
 # 組合せ馬券を取る券種と順序（#56）。
 #
-# **三連複は外してある（#137 の暫定対応）。** parse_exotic_matrix は 2 頭立ての
-# 行列券種（馬単・馬複）専用で、3 頭券種の三連複を通すと 2 頭ぶんのキーしか
-# 作れない。結果として「3 頭の組合せオッズが 2 頭キーで保存される」誤ラベルに
-# なる（欠測ではないので件数を見ても気づけない）。実測では 14 頭立てで
-# 期待 364 点に対し 53 点が保存され、その 53 件すべてが馬単と同じキーを持ち、
-# 値は全て異なっていた。
+# **三連複はまだ外してある。** パーサ（parse_exotic_triple・#137）は入ったので
+# 誤ラベルの危険は無くなったが、**2 券種に戻すと T-10 が 0 近くまで落ちる**
+# （下の表・#143）。三連複の歪みと T-10 ラベルのどちらを取るかは、判定待ちの
+# データが揃ってから決める。EXOTIC_KINDS に "sanrenfuku" を足すだけで戻せる。
 #
-# 三連複用のパーサを分けるまで取得しない。誤ったデータを増やさない方が、
-# 後から捨てる手間より安い。馬単は正しく取れているので #56 は馬単だけで進む。
+# 以前ここに書いてあった誤ラベルの詳細（14 頭立てで期待 364 点に対し 53 点、
+# その 53 件すべてが馬単と同じ 2 頭キー）は #137 に残してある。同じ轍を踏まない
+# ため、点数の突き合わせを _exotic_shortfall に入れた。
 #
 # 三連単は 617KB/レースと重いので、馬単の結果を見てから判断する。
 EXOTIC_KINDS = ("umatan",)
@@ -604,8 +606,9 @@ EXOTIC_KINDS = ("umatan",)
 #   - 「発走間隔・会場数で決まる」（#141/#142）→ 8/31（4 場）が 67% で反証。
 #     効くのは間隔ではなく R/h
 #
-# **#137 で三連複パーサを入れる時は要再検討。** 2 券種に戻せば T-10 は再び
-# 0 に落ちる。三連複の歪みと T-10 のどちらを取るかは、その時点で判断する。
+# **三連複パーサは入った（#137）。取得に戻すかはまだ決めていない。** 2 券種に
+# 戻せば T-10 は再び 0 に落ちる。三連複の歪みと T-10 のどちらを取るかの判断は
+# EXOTIC_KINDS の側に書いてある。
 #
 # 承知の上で 10 のままにしている（#56 / #139 で判断）。**実害が無いため**:
 #
@@ -676,15 +679,61 @@ def _run_exotic(now: float, date: str, races: list[dict]) -> dict | None:
         return None
     race, kind = picked
     html = source.fetch(source.exotic_path(kind, race["source_key"]))
-    matrix = parse_exotic_matrix(html)
+    conflicts: list = []
+    if kind in TRIPLE_KINDS:
+        matrix = parse_exotic_triple(html, ordered=(kind == "sanrentan"),
+                                     conflicts=conflicts)
+    else:
+        matrix = parse_exotic_matrix(html)
 
     done = list(race.get("exotic_done") or [])
     done.append(kind)
     race["exotic_done"] = done
     if matrix:
-        # 組は "1-2" のような文字列キーにする（DynamoDB はタプルを持てない）
+        # 組は "1-2" / "1-2-3" のような文字列キーにする
+        # （DynamoDB はタプルを持てない）
         race.setdefault("exotic", {})[kind] = _decimalize(
-            {f"{a}-{b}": v for (a, b), v in matrix.items() if v})
+            {"-".join(str(x) for x in k): v
+             for k, v in matrix.items() if v})
     _TABLE.put_item(Item=race)
-    return {"date": date, "picked": race["race_id"], "exotic": kind,
-            "pairs": len(matrix) if matrix else 0}
+    out = {"date": date, "picked": race["race_id"], "exotic": kind,
+           "pairs": len(matrix) if matrix else 0}
+    short = _exotic_shortfall(kind, matrix)
+    if short:
+        out["shortfall"] = short
+    if conflicts:
+        # 同じ組に違う値。軸の取り違えを疑う（#137）。件数と 1 例だけ残す
+        out["conflicts"] = {"n": len(conflicts), "first": conflicts[0]}
+    return out
+
+
+def _exotic_shortfall(kind: str, matrix: dict | None) -> dict | None:
+    """取れた点数を期待点数と突き合わせ、欠けていれば内訳を返す（#137）。
+
+    **点数が合っているだけでは正しさの証明にならないが、合わなければ
+    確実に何かが壊れている。** #137 の誤ラベル（3 頭券種を 2 頭パーサに
+    通して 364 点中 53 点）は、この検査があれば取得の時点で出ていた。
+
+    n は馬番の最大値ではなく **キーに現れた馬番の種類数** で数える。
+    取消馬が居ると番号は飛ぶので、最大値では過大な期待になる。
+    """
+    if not matrix:
+        return None
+    nums = {x for k in matrix for x in k}
+    n = len(nums)
+    if kind in TRIPLE_KINDS:
+        if n < 3:
+            return None
+        expect = n * (n - 1) * (n - 2)
+        if kind == "sanrenfuku":
+            expect //= 6
+    else:
+        if n < 2:
+            return None
+        expect = n * (n - 1)
+        if kind in ("umafuku", "wide"):
+            expect //= 2
+    got = len(matrix)
+    if got >= expect:
+        return None
+    return {"n": n, "got": got, "expect": expect}
