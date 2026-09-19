@@ -147,9 +147,14 @@ def readiness(per) -> dict:
     out = {}
     for g, rows in per.items():
         thin = [i for i, r in enumerate(rows) if r["n"] < MIN_N]
+        # **残りは最小の帯から出す。** `0.50-1.00` が律速なのは実測の性質
+        # （#147）であって保証ではない。最後の帯を決め打ちにすると、別の帯が
+        # 薄い時に「remaining 0 なのに ready false」という読めない出力になる
+        least = min(rows, key=lambda r: r["n"])
         out[g] = {
-            "limiting_n": rows[-1]["n"],
-            "remaining": max(0, MIN_N - rows[-1]["n"]),
+            "limiting_band": band_label(rows.index(least)),
+            "limiting_n": least["n"],
+            "remaining": max(0, MIN_N - least["n"]),
             "thin_bins": len(thin),
             "ready": not thin,
         }

@@ -49,6 +49,21 @@ def test_readiness_blocks_when_any_band_thin():
     assert r["ready"] is False
 
 
+def test_readiness_remaining_tracks_the_thinnest_band():
+    """**残りは最小の帯から出す。** 最後の帯を決め打ちにしない。
+
+    `0.50-1.00` が律速なのは実測の性質（#147）であって保証ではない。
+    決め打ちだと、別の帯が薄い時に「remaining 0 なのに ready false」と
+    いう読めない出力になる。判定日にここを読み違えると困る。
+    """
+    rows = _rows(n=1000)
+    rows[2] = {"n": 150, "wins": 0, "payback": 0.0, "sum_support": 0.0}
+    r = readiness(_per(rows, _rows(n=1000)))
+    assert r["B"]["remaining"] == 50            # 1000 ではなく 150 から出す
+    assert r["B"]["limiting_band"] == "0.10-0.15"
+    assert r["B"]["ready"] is False
+
+
 def test_readiness_ready_when_all_bands_full():
     r = readiness(_per(_rows(), _rows()))
     assert r["ready"] is True
