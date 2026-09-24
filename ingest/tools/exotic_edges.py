@@ -37,19 +37,24 @@ S3 の `races/*.json` を読み、締切前の単勝オッズから Harville 式
 補正版（Henery 等）との比較か、着順での検証が要る。**このツールは分布を
 出すところまで**で、原因の断定はしない。
 
-## 単勝の edge との比較
+## 単勝の edge とは比べない（2026-09-19 決定）
 
-#56 の本題は kaz の見立ての検証:
+#56 の本題は kaz の見立ての検証だった:
 
 > 単勝では歪みが小さすぎて検出できないが、組合せなら同じ推定精度でも
 > 歪みが大きく出る
 
-単勝側の実測（#56 コメント）: n=9583 平均 +0.737 σ 1.184 中央値 +0.74
+**この形での検証は諦めた。**
 
-**ただし単勝の edge は p_form（馬柱）対 市場**で、こちらは**単勝 対 組合せ**。
-分母が違うので σ の大小をそのまま「歪みの大小」と読むことはできない。
-並べて眺める材料にはなるが、結論を出すには同じ土俵の定義が要る。
-この点は出力にも明記する。
+    単勝の edge    p_form（馬柱）  対 市場      n=9583  平均 +0.737 σ 1.184
+    組合せの edge  単勝オッズ      対 組合せ    平均 -0.560 σ 0.928
+
+**分母が違う**ので σ の大小を「どちらの歪みが大きいか」と読むことはできない。
+揃えるには組合せ側にも `p_form` を入れる必要があるが、それは
+`docs/analysis-axes.md` の独立性の制約（オッズ軸に馬柱を混ぜない）に抵触する。
+
+**独立性を守り、各軸で独立に閾値を決める**方針に決定した。見立ての検証は
+別の設計で立て直す。この点は出力にも明記する。
 
 使い方:
 
@@ -255,11 +260,28 @@ def render(res):
         L.append(f"正の割合 {s['frac_positive']:.1%}")
         L.append(f"```")
         L.append("")
-    L.append("### 単勝の edge との比較について")
+    from ..exotic import EXOTIC_EDGE_THRESHOLD
+    vals = res["per_kind"].get("umatan") or []
+    if vals:
+        over = sum(1 for v in vals if v >= EXOTIC_EDGE_THRESHOLD)
+        races = res["n_with_exotic"] or 1
+        L.append("### 閾値（#56・固定済み）")
+        L.append("")
+        L.append("```")
+        L.append(f"閾値 +2σ = {EXOTIC_EDGE_THRESHOLD:+.3f}")
+        L.append(f"超過   {over} 点  {over / races:.2f} 点/レース")
+        L.append("```")
+        L.append("")
+        L.append("**回収率を見る前に固定した値**（`exotic.EXOTIC_EDGE_THRESHOLD`）。")
+        L.append("検証期間中は動かさない。")
+        L.append("")
+    L.append("### 単勝の edge とは比べない（#56・2026-09-19 決定）")
     L.append("")
-    L.append("単勝側の実測は n=9583 平均 +0.737 σ 1.184（#56）。**ただし定義が違う**:")
-    L.append("単勝の edge は `p_form`（馬柱）対 市場、こちらは単勝 対 組合せ。")
-    L.append("分母が違うので σ の大小をそのまま歪みの大小と読むことはできない。")
+    L.append("単勝の edge は `p_form`（馬柱）対 市場、こちらは単勝 対 組合せで")
+    L.append("**分母が違う**。σ の大小を「どちらの歪みが大きいか」と読むことは")
+    L.append("できない。組合せ側に `p_form` を入れれば揃うが、それは")
+    L.append("`docs/analysis-axes.md` の独立性の制約に抵触するため採らない。")
+    L.append("**各軸で独立に閾値を決める。**")
     return "\n".join(L)
 
 
