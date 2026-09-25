@@ -136,6 +136,13 @@ def _race(rid: str) -> dict:
         out["edges"] = [_plain({k: v for k, v in e.items()
                                 if k not in ("pk", "sk", "expires_at")})
                         for e in edges]
+    # 組合せの歪み（#56）。"XEDGE#" は "EDGE#" で始まらないので上とは混ざらない
+    xedges = [i for i in items if i["sk"].startswith("XEDGE#")]
+    if xedges:
+        xedges.sort(key=lambda x: x["sk"])
+        out["exotic_edges"] = [_plain({k: v for k, v in e.items()
+                                       if k not in ("pk", "sk", "expires_at")})
+                               for e in xedges]
     return out
 
 
