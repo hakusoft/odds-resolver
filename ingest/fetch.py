@@ -25,7 +25,10 @@ import boto3
 from boto3.dynamodb.conditions import Key
 
 from . import source
-from .form import is_edge_pick, race_edges
+from .exotic import (edges as exotic_edges, exacta_probabilities,
+                     is_exotic_edge_pick, market_from_odds,
+                     trio_probabilities)
+from .form import is_edge_pick, market_probabilities, race_edges
 from .metrics import support_metrics
 from .parse import (parse_exotic_matrix, parse_exotic_triple,
                     parse_horse_records, parse_odds, parse_result)
@@ -350,6 +353,28 @@ def _latest_snapshot_odds(race_id: str) -> list | None:
     if not items:
         return None
     return [float(o) if o is not None else None for o in items[0]["odds"]]
+
+
+def _latest_snapshot(race_id: str) -> tuple[list, list] | None:
+    """直近スナップショットの (オッズ列, 馬番列) を返す（#56）。
+
+    `_latest_snapshot_odds` はオッズだけを返すが、組合せの理論価格を作るには
+    **どの馬番の支持率か**が要る。同じクエリで両方取れるので分けて書く。
+    """
+    items = _TABLE.query(
+        KeyConditionExpression=(
+            Key("pk").eq(f"RACE#{race_id}") & Key("sk").begins_with("TS#")),
+        ScanIndexForward=False, Limit=1,
+    ).get("Items", [])
+    if not items:
+        return None
+    it = items[0]
+    odds = [float(o) if o is not None else None for o in it.get("odds") or []]
+    nums = [int(h["num"]) for h in (it.get("horses") or [])
+            if h.get("num") is not None]
+    if not odds or len(nums) != len(odds):
+        return None
+    return odds, nums
 
 
 def _notify_surges(race: dict, prev_odds: list | None, parsed: dict,
@@ -704,7 +729,74 @@ def _run_exotic(now: float, date: str, races: list[dict]) -> dict | None:
     if conflicts:
         # 同じ組に違う値。軸の取り違えを疑う（#137）。件数と 1 例だけ残す
         out["conflicts"] = {"n": len(conflicts), "first": conflicts[0]}
+    logged = _record_exotic_edges(race, kind, matrix, now)
+    if logged:
+        out["edge_picks"] = logged
     return out
+
+
+def _record_exotic_edges(race: dict, kind: str, matrix: dict | None,
+                         now: float) -> int:
+    """組合せの歪みが閾値を超えた組を、**その時点**で記録する（#56）。
+
+    単勝の `_record_edges`（#117 Phase 2-3）と同じ狙い・同じ構造。分布は
+    結果を見てから遡って集計できるので「良い閾値を探して見つけた」以上の
+    ことが言えない。ここは**予測が結果より先に確定していた**ことが
+    構造的に保証される記録を作る。
+
+    **理論の入力は単勝オッズだけ。** 馬柱（p_form）は使わない。オッズ軸の
+    分析に馬柱を混ぜると市場の写像になり、市場との乖離が測れなくなる
+    （`docs/analysis-axes.md` の独立性の制約・#56 で 2026-09-19 に確定）。
+
+    `_run_exotic` は 1 レース 1 券種 1 回しか動かないので、ここも自然に
+    1 レース 1 回になる（単勝側が `edge_logged` で防いでいる重複は起きない）。
+
+    結果は入れない。答え合わせは archive が後日行う。
+    """
+    from decimal import Decimal
+    rid = race.get("race_id")
+    if not rid or not matrix:
+        return 0
+
+    # 直近スナップショットの単勝オッズから理論価格を作る。exotic は
+    # EXOTIC_SLOT_MINUTES（= EDGE_SLOT_MINUTES）でしか動かないので、
+    # 直近スナップショットも締切前の同じ時間帯のものになる
+    snap = _latest_snapshot(rid)
+    if not snap:
+        return 0
+    odds, nums = snap
+    pm = market_probabilities(odds)
+    probs = {int(n): p for n, p in zip(nums, pm) if n and p}
+    if len(probs) < 3:
+        return 0
+
+    theory = (trio_probabilities(probs) if kind in TRIPLE_KINDS
+              else exacta_probabilities(probs))
+    market = market_from_odds({k: v for k, v in matrix.items() if v})
+    scored = exotic_edges(theory, market)
+    picks = {k: v for k, v in scored.items() if is_exotic_edge_pick(v)}
+    if not picks:
+        return 0
+
+    for combo, e in picks.items():
+        label = "-".join(str(x) for x in combo)
+        o = matrix.get(combo)
+        _TABLE.put_item(Item={
+            "pk": f"RACE#{rid}",
+            "sk": f"XEDGE#{kind}#{label}",
+            "kind": kind,
+            "combo": label,
+            # 判定時点の値。結果は入れない
+            "p_theory": Decimal(str(round(theory[combo], 7))),
+            "p_market": Decimal(str(round(market[combo], 7))),
+            # 素のオッズ。p_market は正規化済みで元値に戻せないため、
+            # 回収率の計算にはこれが要る
+            "odds": Decimal(str(o)) if o else None,
+            "edge": Decimal(str(round(e, 4))),
+            "signaled_at": Decimal(str(int(now))),
+            "expires_at": int(now) + _TTL_DAYS * 24 * 3600,
+        })
+    return len(picks)
 
 
 def _exotic_shortfall(kind: str, matrix: dict | None) -> dict | None:

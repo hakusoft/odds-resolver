@@ -116,7 +116,7 @@ def test_run_writes_both_buckets_with_api_schema(monkeypatch):
     # signals は前向き検証ログ（#106）に書いた行数。この器には SIGNAL# が無い
     assert result == {"date": "20260726", "races": 2, "days": 1,
                       "calib_races": 1, "banei_races": 0, "signals": 0,
-                      "edges": 0}
+                      "edges": 0, "exotic_edges": 0}
 
     for bucket, prefix in (("data-bkt", ""), ("front-bkt", "data/")):
         idx = _body(fake, bucket, f"{prefix}20260726/index.json")

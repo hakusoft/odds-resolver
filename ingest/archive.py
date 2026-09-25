@@ -76,10 +76,12 @@ def run(date: str | None = None) -> dict:
     _update_calibration(date, day_calib, n_scored, n_banei_scored)
     n_signals = _append_forward_log(date, fetched)
     n_edges = _append_edge_log(date, fetched)
+    n_xedges = _append_exotic_edge_log(date, fetched)
     _update_status(date, index, fetched, days)
     return {"date": date, "races": len(index["races"]), "days": len(days),
             "calib_races": n_scored, "banei_races": n_banei_scored,
-            "signals": n_signals, "edges": n_edges}
+            "signals": n_signals, "edges": n_edges,
+            "exotic_edges": n_xedges}
 
 
 def recalc(date: str) -> dict:
@@ -205,6 +207,79 @@ def _append_edge_log(date: str, races: list[dict]) -> int:
         return 0
     _put(key, {"date": date, "n": len(rows), "rows": rows}, _CC_RACE)
     return len(rows)
+
+
+def _append_exotic_edge_log(date: str, races: list[dict]) -> int:
+    """組合せの歪み（XEDGE#）に結果を突き合わせ、前向きログへ焼く（#56）。
+
+    `_append_edge_log`（#117 の単勝）と同じ構造・同じ理由。fetch が締切前に
+    書いた XEDGE# をそのまま持ち込み、**当たり外れだけ**を後から付ける。
+
+    **過去分は作れない。** XEDGE# は fetch がその場で書くものなので、遡って
+    生成する経路が無い。これは制約ではなく担保。
+
+    的中判定は券種ごとに違う:
+
+        umatan      1着→2着 が順番どおり
+        sanrenfuku  3 頭が順不同で 1-3 着を占める
+        sanrentan   3 頭が順番どおり 1-2-3 着
+
+    `exotic_edge/{date}.json` へ **write-once**。既にあれば書かない。
+    """
+    key = f"exotic_edge/{date}.json"
+    if _exists(key):
+        return 0
+    rows = []
+    for race in races:
+        picks = race.get("exotic_edges")
+        if not picks:
+            continue
+        result = race.get("result") or []
+        order = [r["num"] for r in sorted(result, key=lambda x: x["pos"])
+                 if r.get("pos") is not None]
+        for p in picks:
+            combo = p.get("combo")
+            kind = p.get("kind")
+            rows.append({
+                "race_id": race["race_id"],
+                "venue": race.get("venue"),
+                "kind": kind,
+                "combo": combo,
+                # --- 予測時点（fetch が締切前に確定させた値）---
+                "p_theory": p.get("p_theory"),
+                "p_market": p.get("p_market"),
+                "odds": p.get("odds"),
+                "edge": p.get("edge"),
+                "signaled_at": p.get("signaled_at"),
+                # --- 結果（後から付けるのはここだけ）---
+                "hit": _exotic_hit(kind, combo, order),
+            })
+    if not rows:
+        return 0
+    _put(key, {"date": date, "n": len(rows), "rows": rows}, _CC_RACE)
+    return len(rows)
+
+
+def _exotic_hit(kind: str, combo: str | None, order: list) -> bool | None:
+    """その組が的中したか。着順が足りなければ None（外れではない）。
+
+    **None と False を分ける。** 着順が取れていないレースを「外れ」に
+    すると分母だけ増えて回収率が不当に下がる（`_append_edge_log` が
+    pos 無しを外れにしないのと同じ理由）。
+    """
+    if not combo or not kind:
+        return None
+    try:
+        picked = [int(x) for x in combo.split("-")]
+    except ValueError:
+        return None
+    need = len(picked)
+    if len(order) < need:
+        return None
+    top = order[:need]
+    if kind in ("sanrenfuku", "umafuku", "wide"):
+        return sorted(picked) == sorted(top)
+    return picked == top        # umatan / sanrentan は順番どおり
 
 
 def _exists(key: str) -> bool:
