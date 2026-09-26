@@ -304,3 +304,42 @@ def test_tanfuku_still_runs_when_no_exotic(monkeypatch):
     monkeypatch.setattr(f, "_run_record", lambda *a: {"record": 1})
 
     assert f.run(now) == {"record": 1}
+
+
+# 組合せの歪みの閾値（#56）
+def test_exotic_edge_threshold_is_two_sigma():
+    """**回収率を見る前に固定した値。** 緩めるなら検証をやり直す。
+
+    2569 レース / 112,262 点の分布（平均 -0.560 / σ 0.928）から +2σ。
+    単勝（#117）が +2σ を採ったのと同じ絞り込みの程度。
+    """
+    from ingest.exotic import (EXOTIC_EDGE_MEAN, EXOTIC_EDGE_SD,
+                               EXOTIC_EDGE_THRESHOLD)
+    assert (EXOTIC_EDGE_MEAN, EXOTIC_EDGE_SD) == (-0.560, 0.928)
+    assert EXOTIC_EDGE_THRESHOLD == EXOTIC_EDGE_MEAN + 2.0 * EXOTIC_EDGE_SD
+    assert round(EXOTIC_EDGE_THRESHOLD, 3) == 1.296
+
+
+def test_exotic_edge_pick_at_threshold():
+    """閾値ちょうどは拾う（>= で判定）。form.is_edge_pick と揃える。"""
+    from ingest.exotic import EXOTIC_EDGE_THRESHOLD, is_exotic_edge_pick
+    assert is_exotic_edge_pick(EXOTIC_EDGE_THRESHOLD)
+    assert not is_exotic_edge_pick(EXOTIC_EDGE_THRESHOLD - 1e-9)
+
+
+def test_exotic_edge_pick_ignores_missing():
+    """乖離が無い組（片方に値が無い）は候補にしない。"""
+    from ingest.exotic import is_exotic_edge_pick
+    assert not is_exotic_edge_pick(None)
+
+
+def test_exotic_edge_threshold_is_positive_side_only():
+    """**上側だけを見る。** 馬券は買うことしかできない。
+
+    分布は負に寄っている（平均 -0.560）が、閾値は正の側にある。
+    負の大きい値（市場が高く見ている = 売り候補）を拾わないことを固定する。
+    """
+    from ingest.exotic import EXOTIC_EDGE_THRESHOLD, is_exotic_edge_pick
+    assert EXOTIC_EDGE_THRESHOLD > 0
+    assert not is_exotic_edge_pick(-3.0)      # 下側は候補にしない
+    assert not is_exotic_edge_pick(-0.560)    # 平均も候補にしない
