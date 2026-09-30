@@ -221,6 +221,8 @@ def _append_exotic_edge_log(date: str, races: list[dict]) -> int:
     的中判定は券種ごとに違う:
 
         umatan      1着→2着 が順番どおり
+        umafuku     2 頭が順不同で 1-2 着を占める
+        wide        2 頭がともに 3 着以内（**見る着順が選んだ数より多い**）
         sanrenfuku  3 頭が順不同で 1-3 着を占める
         sanrentan   3 頭が順番どおり 1-2-3 着
 
@@ -260,26 +262,50 @@ def _append_exotic_edge_log(date: str, races: list[dict]) -> int:
     return len(rows)
 
 
+# 券種ごとに「何着まで見るか」。選んだ点数と一致しないのはワイドだけで、
+# **2 頭選んで 3 着まで見る**（3 着以内に 2 頭入れば当たり）。ここを点数で
+# 代用すると 1-2 着しか見ず、判定が厳しくなる（#56 の判定後に発見）。
+_EXOTIC_PLACES = {
+    "umatan": 2,
+    "umafuku": 2,
+    "wide": 3,
+    "sanrenfuku": 3,
+    "sanrentan": 3,
+}
+
+# 順序を問う券種。ここに無いものは順不同。
+_EXOTIC_ORDERED = ("umatan", "sanrentan")
+
+
 def _exotic_hit(kind: str, combo: str | None, order: list) -> bool | None:
     """その組が的中したか。着順が足りなければ None（外れではない）。
 
     **None と False を分ける。** 着順が取れていないレースを「外れ」に
     すると分母だけ増えて回収率が不当に下がる（`_append_edge_log` が
     pos 無しを外れにしないのと同じ理由）。
+
+    **選んだ点数と見る着順は別。** ワイドは 2 頭選んで 3 着まで見る。
+    `len(picked)` で代用すると 1-2 着しか見ないので、3 着に入った側が
+    外れ扱いになる。足りない着順の判定も点数ではなく着数で決める
+    （ワイドは 2 着までしか無ければ当落が確定しないので None）。
     """
     if not combo or not kind:
+        return None
+    places = _EXOTIC_PLACES.get(kind)
+    if places is None:
         return None
     try:
         picked = [int(x) for x in combo.split("-")]
     except ValueError:
         return None
-    need = len(picked)
-    if len(order) < need:
+    if len(order) < places:
         return None
-    top = order[:need]
-    if kind in ("sanrenfuku", "umafuku", "wide"):
-        return sorted(picked) == sorted(top)
-    return picked == top        # umatan / sanrentan は順番どおり
+    top = order[:places]
+    if kind in _EXOTIC_ORDERED:
+        return picked == top                    # 順番どおり
+    if len(picked) == places:
+        return sorted(picked) == sorted(top)    # 順不同・全着を占める
+    return all(p in top for p in picked)        # ワイド: 選んだ分だけ入れば当たり
 
 
 def _exists(key: str) -> bool:

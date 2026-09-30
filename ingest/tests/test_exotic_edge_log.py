@@ -39,14 +39,48 @@ def test_sanrenfuku_miss_when_wrong_horse():
     assert _exotic_hit("sanrenfuku", "5-3-1", ORDER) is False
 
 
-def test_umafuku_and_wide_ignore_order():
-    """馬複・ワイドも順不同扱い（将来取得した時のため）。
-
-    **ワイドは本来 3 着以内 2 頭なので、この判定では厳しすぎる。**
-    取得する時に定義を見直すこと。現状 EXOTIC_KINDS に入っていない。
-    """
+def test_umafuku_ignores_order_within_two_places():
+    """馬複は順不同だが 1-2 着を占める必要がある。"""
     assert _exotic_hit("umafuku", "3-5", ORDER) is True
     assert _exotic_hit("umafuku", "5-3", ORDER) is True
+
+
+def test_umafuku_miss_when_horse_is_third():
+    """3 着では馬複は当たらない（ワイドとの差がここ）。"""
+    assert _exotic_hit("umafuku", "5-8", ORDER) is False
+
+
+def test_wide_hits_when_both_within_third():
+    """**ワイドは 2 頭がともに 3 着以内なら当たり。** 着順は問わない。
+
+    以前は点数（2）をそのまま見る着順にしていたため 1-2 着しか見ず、
+    3 着に入った側を外れにしていた（#56 の判定後に発見）。
+    """
+    assert _exotic_hit("wide", "5-3", ORDER) is True    # 1-2 着
+    assert _exotic_hit("wide", "5-8", ORDER) is True    # 1-3 着 ← 旧実装は False
+    assert _exotic_hit("wide", "3-8", ORDER) is True    # 2-3 着 ← 旧実装は False
+    assert _exotic_hit("wide", "8-5", ORDER) is True    # 順不同
+
+
+def test_wide_miss_when_one_horse_is_fourth():
+    """1 頭でも 4 着以下なら外れ。"""
+    assert _exotic_hit("wide", "5-1", ORDER) is False   # 1 着と 4 着
+    assert _exotic_hit("wide", "1-2", ORDER) is False   # 4 着と 5 着
+
+
+def test_wide_needs_three_places_to_decide():
+    """**2 着までしか無いワイドは None。** 当落が確定しない。
+
+    点数（2）で足りるか判定していたため、旧実装は 2 着までで True/False を
+    返していた。3 着に入るかどうかが未定なのに外れを確定させてしまう。
+    """
+    assert _exotic_hit("wide", "5-3", [5, 3]) is None
+    assert _exotic_hit("umafuku", "5-3", [5, 3]) is True    # 馬複は 2 着で確定
+
+
+def test_hit_is_none_on_unknown_kind():
+    """知らない券種は判定しない（黙って順不同扱いにしない）。"""
+    assert _exotic_hit("tansho", "5", ORDER) is None
 
 
 def test_hit_is_none_when_result_too_short():
