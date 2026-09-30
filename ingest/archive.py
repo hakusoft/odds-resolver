@@ -262,15 +262,21 @@ def _append_exotic_edge_log(date: str, races: list[dict]) -> int:
     return len(rows)
 
 
-# 券種ごとに「何着まで見るか」。選んだ点数と一致しないのはワイドだけで、
-# **2 頭選んで 3 着まで見る**（3 着以内に 2 頭入れば当たり）。ここを点数で
-# 代用すると 1-2 着しか見ず、判定が厳しくなる（#56 の判定後に発見）。
-_EXOTIC_PLACES = {
-    "umatan": 2,
-    "umafuku": 2,
-    "wide": 3,
-    "sanrenfuku": 3,
-    "sanrentan": 3,
+# 券種ごとの「選ぶ頭数」と「何着まで見るか」。**この 2 つは別物。**
+#
+# 一致しないのはワイドだけで、**2 頭選んで 3 着まで見る**（3 着以内に 2 頭
+# 入れば当たり）。見る着順を点数で代用すると 1-2 着しか見ず、判定が厳しく
+# なる（#56 の判定後に発見）。
+#
+# 頭数も持つのは、券種と点数が食い違う入力を弾くため。持たないと
+# 「三連複に 2 頭」がワイドと同じ枝に落ちて当たり扱いになる。
+_EXOTIC_SHAPE = {
+    #            頭数, 着数
+    "umatan":     (2, 2),
+    "umafuku":    (2, 2),
+    "wide":       (2, 3),   # ← ここだけ食い違う
+    "sanrenfuku": (3, 3),
+    "sanrentan":  (3, 3),
 }
 
 # 順序を問う券種。ここに無いものは順不同。
@@ -288,22 +294,28 @@ def _exotic_hit(kind: str, combo: str | None, order: list) -> bool | None:
     `len(picked)` で代用すると 1-2 着しか見ないので、3 着に入った側が
     外れ扱いになる。足りない着順の判定も点数ではなく着数で決める
     （ワイドは 2 着までしか無ければ当落が確定しないので None）。
+
+    **券種に合わない点数・重複馬番は None。** 判定できない入力を
+    False にすると外れとして数えられてしまう（同上の理由）。
     """
     if not combo or not kind:
         return None
-    places = _EXOTIC_PLACES.get(kind)
-    if places is None:
+    shape = _EXOTIC_SHAPE.get(kind)
+    if shape is None:
         return None
+    horses, places = shape
     try:
         picked = [int(x) for x in combo.split("-")]
     except ValueError:
+        return None
+    if len(picked) != horses or len(set(picked)) != horses:
         return None
     if len(order) < places:
         return None
     top = order[:places]
     if kind in _EXOTIC_ORDERED:
         return picked == top                    # 順番どおり
-    if len(picked) == places:
+    if horses == places:
         return sorted(picked) == sorted(top)    # 順不同・全着を占める
     return all(p in top for p in picked)        # ワイド: 選んだ分だけ入れば当たり
 

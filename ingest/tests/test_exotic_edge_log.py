@@ -83,6 +83,25 @@ def test_hit_is_none_on_unknown_kind():
     assert _exotic_hit("tansho", "5", ORDER) is None
 
 
+def test_hit_is_none_when_combo_size_mismatches_kind():
+    """**券種に合わない点数は None。** 判定できないものを外れにしない。
+
+    「頭数」と「着数」を分けたとき、点数を検証しないと三連複に 2 頭を
+    渡した場合にワイドと同じ枝（3 着以内に入っていれば当たり）へ落ちて
+    しまう。旧実装では sorted 比較で False になっていた経路。
+    """
+    assert _exotic_hit("sanrenfuku", "5-3", ORDER) is None    # 3 頭券種に 2 頭
+    assert _exotic_hit("wide", "5-3-8", ORDER) is None        # 2 頭券種に 3 頭
+    assert _exotic_hit("wide", "5", ORDER) is None            # 2 頭券種に 1 頭
+    assert _exotic_hit("umatan", "5-3-8", ORDER) is None
+
+
+def test_hit_is_none_on_duplicate_horse():
+    """同じ馬番を 2 回含む組は None。買えない組なので判定しない。"""
+    assert _exotic_hit("wide", "5-5", ORDER) is None
+    assert _exotic_hit("umafuku", "5-5", ORDER) is None
+
+
 def test_hit_is_none_when_result_too_short():
     """**着順が足りなければ None。外れではない。**
 
