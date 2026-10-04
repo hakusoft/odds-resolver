@@ -25,9 +25,8 @@ import boto3
 from boto3.dynamodb.conditions import Key
 
 from . import source
-from .exotic import (edges as exotic_edges, exacta_probabilities,
-                     is_exotic_edge_pick, market_from_odds,
-                     trio_probabilities)
+from .exotic import (edges as exotic_edges, is_exotic_edge_pick_for,
+                     market_from_odds, theory_for)
 from .form import is_edge_pick, market_probabilities, race_edges
 from .metrics import support_metrics
 from .parse import (parse_exotic_matrix, parse_exotic_triple,
@@ -579,17 +578,34 @@ TRIPLE_KINDS = ("sanrenfuku", "sanrentan")
 
 # 組合せ馬券を取る券種と順序（#56）。
 #
+# **ワイドを足した（2026-09-30・#160）。** #56 の判定で馬単は検出力が
+# 足りないと分かったため（n=367 で的中 1 件・オッズ中央値 858.7・回収率が
+# 1 件の当落で 0% と 107% を振れる）。的中率の高い帯で測り直す。
+#
+# **ワイドは「取るが記録しない」。** 閾値が未測定なので
+# `is_exotic_edge_pick_for` が常に False を返し、XEDGE# は書かれない。
+# オッズは races/*.json に残るので分布は後から計算でき、**閾値を決めてから
+# 記録を始められる**。順序を逆にすると回収率を見ながら閾値を選べてしまう。
+#
+#   1. ワイドのオッズを貯める（いま）
+#   2. 数日後に分布を測る（tools.exotic_edges --kind wide）
+#   3. +2σ を _EXOTIC_THRESHOLD に入れる → ここで初めて記録が始まる
+#   4. n>=300 まで待って判定を 1 回
+#
+# **T-10 ラベルは落ちる。** 2 券種なので下の表どおりほぼ 0% になる。
+# 承知の上（#143 の検証で実害無しと確認済み・見るべきは T-45/T-15 で
+# どちらも 100% を保つ。T-10 以内の観測自体も全レースに残る）。
+#
 # **三連複はまだ外してある。** パーサ（parse_exotic_triple・#137）は入ったので
-# 誤ラベルの危険は無くなったが、**2 券種に戻すと T-10 が 0 近くまで落ちる**
-# （下の表・#143）。三連複の歪みと T-10 ラベルのどちらを取るかは、判定待ちの
-# データが揃ってから決める。EXOTIC_KINDS に "sanrenfuku" を足すだけで戻せる。
+# 誤ラベルの危険は無くなった。3 券種にすると T-45/T-15 まで崩れる恐れがあるので、
+# ワイドの判定が終わるまで足さない。EXOTIC_KINDS に足すだけで戻せる。
 #
 # 以前ここに書いてあった誤ラベルの詳細（14 頭立てで期待 364 点に対し 53 点、
 # その 53 件すべてが馬単と同じ 2 頭キー）は #137 に残してある。同じ轍を踏まない
 # ため、点数の突き合わせを _exotic_shortfall に入れた。
 #
 # 三連単は 617KB/レースと重いので、馬単の結果を見てから判断する。
-EXOTIC_KINDS = ("umatan",)
+EXOTIC_KINDS = ("umatan", "wide")
 
 # 組合せを取る締切前スロット（分）。単勝の乖離（EDGE_SLOT_MINUTES）と
 # 揃える。同じ瞬間の単勝と組合せを比べたいので、時点をずらさない。
@@ -770,11 +786,20 @@ def _record_exotic_edges(race: dict, kind: str, matrix: dict | None,
     if len(probs) < 3:
         return 0
 
-    theory = (trio_probabilities(probs) if kind in TRIPLE_KINDS
-              else exacta_probabilities(probs))
+    # **券種で理論式を選ぶ（#160）。** 幅で選ぶと wide が馬単式になり、
+    # 実際の確率の 4〜8 倍ずれる。分岐は exotic.theory_for に集約してある
+    # （分布測定ツールと同じ関数を使う。片方だけ直すと食い違う）
+    theory = theory_for(kind, probs)
+    if theory is None:
+        return 0        # 理論式が無い券種（sanrentan）は記録しない
+
     market = market_from_odds({k: v for k, v in matrix.items() if v})
     scored = exotic_edges(theory, market)
-    picks = {k: v for k, v in scored.items() if is_exotic_edge_pick(v)}
+
+    # **閾値が未測定の券種は記録しない（#160）。** オッズの取得は続くので
+    # 分布は後から出せる。閾値を決める前に記録を始めると、回収率を見てから
+    # 閾値を選べてしまい #56 の作法が崩れる
+    picks = {k: v for k, v in scored.items() if is_exotic_edge_pick_for(kind, v)}
     if not picks:
         return 0
 

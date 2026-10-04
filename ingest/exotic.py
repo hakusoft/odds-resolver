@@ -70,6 +70,82 @@ def trio_probabilities(probs: dict[int, float]) -> dict[tuple[int, ...], float]:
     return out
 
 
+def wide_probabilities(probs: dict[int, float]) -> dict[tuple[int, int], float]:
+    """ワイド（2 頭がともに 3 着以内）の理論確率。
+
+    **三連複を畳み込んで出す。** 「a と b がともに 3 着以内」は「a・b・c が
+    1-3 着を占める」を c について足し上げたものに等しい:
+
+        P(wide {a,b}) = Σ_{c ∉ {a,b}} P(trio {a,b,c})
+
+    Harville の順列から直接計算した値と一致することを確認済み
+    （誤差は浮動小数点の丸めのみ）。
+
+    **合計は 1.0 ではなく 3.0 になる。** 3 着以内の 3 頭からペアが 3 組
+    できるので、各レースで必ず 3 組が当たる。`exacta_probabilities` や
+    `trio_probabilities`（どちらも合計 1.0）と**性質が違う**。
+
+    この差は `edges` で市場（`market_from_odds` は合計 1.0 に正規化）と
+    比べる際に log(3) ≒ 1.099 のゲタとして全組に乗る。閾値を分布から
+    引き直せば平均には吸収されるが、**馬単の閾値をそのまま使うことは
+    できない**（EXOTIC_EDGE_THRESHOLD は馬単の分布から引いたもの）。
+
+    キーは昇順のタプル。
+    """
+    trio = trio_probabilities(probs)
+    out: dict[tuple[int, int], float] = {}
+    for combo, p in trio.items():
+        for pair in _combinations(combo, 2):
+            k = tuple(sorted(pair))
+            out[k] = out.get(k, 0.0) + p
+    return out
+
+
+def quinella_probabilities(probs: dict[int, float]) -> dict[tuple[int, int], float]:
+    """馬複（順不同で 1-2 着）の理論確率。馬単の両順を足す。
+
+    合計は 1.0（`exacta_probabilities` を畳んだだけなので保たれる）。
+    キーは昇順のタプル。
+    """
+    out: dict[tuple[int, int], float] = {}
+    for (i, j), p in exacta_probabilities(probs).items():
+        k = (i, j) if i < j else (j, i)
+        out[k] = out.get(k, 0.0) + p
+    return out
+
+
+# 券種 → 理論確率を作る関数。**幅ではなく券種で選ぶ（#160）。**
+#
+# 2 頭キーの券種が 3 つあり、当たりの定義がそれぞれ違う:
+#
+#   umatan   1着→2着（順序あり）      合計 1.0
+#   umafuku  1-2 着を順不同で占める   合計 1.0
+#   wide     2 頭がともに 3 着以内     **合計 3.0**
+#
+# 幅（len(key)）で分岐すると wide と umafuku が馬単式で計算される。
+# ワイドは実際の確率が 4〜8 倍あるので edge が系統的に負へ大きくずれる。
+#
+# **sanrentan は入れていない。** 順序ありの 3 頭なので trio では代用できず、
+# 専用の理論式が無い（パーサも壊れている・#137）。
+_THEORY = {
+    "umatan": exacta_probabilities,
+    "umafuku": quinella_probabilities,
+    "wide": wide_probabilities,
+    "sanrenfuku": trio_probabilities,
+}
+
+
+def theory_for(kind: str, probs: dict[int, float]) -> dict | None:
+    """券種に応じた理論確率。知らない券種・理論式が無い券種は None。
+
+    `fetch` と `tools.exotic_edges` の両方から使う。**片方だけ直すと
+    「取得時の理論」と「分布測定の理論」が食い違う**ので、分岐はここに
+    集める。
+    """
+    fn = _THEORY.get(kind)
+    return fn(probs) if fn else None
+
+
 def _combinations(items, r):
     """itertools.combinations の薄いラッパ（import を 1 か所に集める）。"""
     from itertools import combinations
@@ -151,5 +227,47 @@ def is_exotic_edge_pick(e: float | None) -> bool:
     閾値は分布から決めた固定値。レースごとに再計算しないのは、その日の
     出走馬によって基準が動くと日をまたいだ比較ができなくなるため
     （`form.is_edge_pick` と同じ考え方）。
+
+    **馬単専用。** 券種ごとに分布が違うので、他の券種は
+    `is_exotic_edge_pick_for` を使う（この関数は馬単の閾値を直に見る）。
     """
     return e is not None and e >= EXOTIC_EDGE_THRESHOLD
+
+
+# 券種ごとの閾値。**分布を測ってから入れる。値が無い券種は記録しない。**
+#
+# 馬単の閾値（+1.295）を他の券種に流用してはいけない。edge は
+# log(理論/市場) で、理論確率の合計が券種ごとに違うため:
+#
+#   umatan / umafuku / sanrenfuku   合計 1.0
+#   wide                            **合計 3.0** → log(3) ≒ +1.099 のゲタ
+#
+# ワイドに馬単の閾値を当てると、ゲタのぶんだけで閾値に近づいてしまい
+# 「歪みを見つけた」ではなく「正規化の違いを拾った」ことになる。
+#
+# **未測定の券種を None にしておくのが #56 の作法。** 閾値を決める前に
+# 記録を始めると、後から回収率を見ながら閾値を選べてしまう。値が入るのは
+# 分布を測った後（`tools.exotic_edges --kind <券種>`）。
+_EXOTIC_THRESHOLD = {
+    "umatan": EXOTIC_EDGE_THRESHOLD,   # -0.560 + 2×0.928（112,262 点の分布）
+    # "wide": 未測定。取得を始めた 2026-09-30 から数日で分布が出る（#160）
+}
+
+
+def exotic_threshold(kind: str) -> float | None:
+    """券種の閾値。未測定なら None（= まだ記録してはいけない）。"""
+    return _EXOTIC_THRESHOLD.get(kind)
+
+
+def is_exotic_edge_pick_for(kind: str, e: float | None) -> bool:
+    """券種の閾値で妙味候補を判定する。**閾値が無い券種は常に False。**
+
+    閾値未定の券種を「とりあえず記録する」ことはしない。記録してから
+    閾値を決めると、分布ではなく結果を見て決められてしまう（#56 の
+    「先に決めた基準を動かさない」が成立しなくなる）。
+
+    オッズの取得自体は続くので、分布は後から計算できる。**記録を待つ
+    ことで失うものは無い。**
+    """
+    t = exotic_threshold(kind)
+    return t is not None and e is not None and e >= t
