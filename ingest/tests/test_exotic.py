@@ -103,21 +103,29 @@ def test_wide_sums_to_three_not_one():
 
 def test_wide_key_is_sorted():
     """順不同なのでキーは昇順に正規化する（三連複と同じ）。"""
-    w = wide_probabilities({3: 0.4, 1: 0.3, 2: 0.3})
-    assert sorted(w) == [(1, 2), (1, 3), (2, 3)]
+    w = wide_probabilities({4: 0.4, 1: 0.3, 2: 0.2, 3: 0.1})
     assert all(k == tuple(sorted(k)) for k in w)
+    assert (1, 4) in w and (4, 1) not in w
 
 
 def test_wide_degenerates_at_three_horses():
     """**3 頭立てでは全組が確率 1.0。** 3 頭しかいなければ全員 3 着以内。
 
-    測定時はこの退化に注意が要る。理論 1.0 に対し市場は 1.0 未満なので
-    edge が必ず正に出て、**歪みではなく頭数の少なさを拾ってしまう**。
-    実運用の最少は 5 頭程度だが、取消で 3 頭まで減ることはあり得る。
+    理論 1.0 に対し市場は控除率ぶん 1.0 未満なので edge が必ず正に出て、
+    **歪みではなく頭数の少なさを拾う**。この退化があるため `theory_for`
+    は 3 頭立てのワイドを計算しない（下の門のテスト）。
+
+    ここは素の関数の性質を記録しておくためのテスト。
     """
     w = wide_probabilities({1: 0.5, 2: 0.3, 3: 0.2})
     assert len(w) == 3                                  # 3C2
     assert all(v == pytest.approx(1.0) for v in w.values())
+
+
+def test_wide_is_normal_from_four_horses():
+    """4 頭立てなら退化しない（均等配分で 0.5）。門を 4 に置いた根拠。"""
+    w = wide_probabilities({1: 0.25, 2: 0.25, 3: 0.25, 4: 0.25})
+    assert all(v == pytest.approx(0.5) for v in w.values())
 
 
 def test_wide_probability_never_exceeds_one():
@@ -183,6 +191,29 @@ def test_theory_for_returns_none_without_formula():
     p = {1: 0.4, 2: 0.3, 3: 0.2, 4: 0.1}
     assert theory_for("sanrentan", p) is None
     assert theory_for("tansho", p) is None
+
+
+def test_theory_for_refuses_three_horse_wide():
+    """**3 頭立てのワイドは計算しない。** 退化して歪みを測れない。
+
+    全組が確率 1.0 になるので edge が必ず正に出る。「市場が安い」のでは
+    なく「3 頭しかいない」ことを拾っているだけ。4 頭からは成立する。
+    """
+    p3 = {1: 0.5, 2: 0.3, 3: 0.2}
+    assert theory_for("wide", p3) is None
+    assert theory_for("sanrenfuku", p3) is None     # 組が 1 つで比較に意味が無い
+
+    p4 = {1: 0.4, 2: 0.3, 3: 0.2, 4: 0.1}
+    assert theory_for("wide", p4) is not None
+    assert theory_for("sanrenfuku", p4) is not None
+
+
+def test_theory_for_two_horse_kinds_still_work():
+    """馬単・馬複は 2 頭で成立する（門はワイドと三連複だけ）。"""
+    p2 = {1: 0.6, 2: 0.4}
+    assert theory_for("umatan", p2) is not None
+    assert theory_for("umafuku", p2) is not None
+    assert theory_for("wide", p2) is None
 
 
 # --- 券種ごとの閾値（#160）-------------------------------------------------

@@ -134,14 +134,36 @@ _THEORY = {
     "sanrenfuku": trio_probabilities,
 }
 
+# 券種が成立する最少頭数。**3 着を争う券種は 4 頭以上を要する。**
+#
+# 3 頭立てのワイドは全組が確率 1.0 になる（3 頭しかいなければ全員 3 着以内）。
+# 理論 1.0 に対し市場は控除率ぶん 1.0 未満なので edge が必ず正に出て、
+# **歪みではなく頭数の少なさを拾う**。4 頭なら 0.5 に落ちるので問題ない。
+#
+# 三連複も 3 頭立てでは組が 1 つだけになり、市場との比較に意味が無い。
+#
+# 実データ（直近 800 レース）の最少は 4 頭が 4 レースで、3 頭は存在しない。
+# ただし取消で減ることはあり得るので門を置く。
+_MIN_HORSES = {
+    "umatan": 2,
+    "umafuku": 2,
+    "wide": 4,
+    "sanrenfuku": 4,
+}
+
 
 def theory_for(kind: str, probs: dict[int, float]) -> dict | None:
     """券種に応じた理論確率。知らない券種・理論式が無い券種は None。
+
+    **頭数が足りなければ None。** 3 頭立てのワイドのように、券種が
+    成立しない・退化して歪みを測れない場合は計算しない（`_MIN_HORSES`）。
 
     `fetch` と `tools.exotic_edges` の両方から使う。**片方だけ直すと
     「取得時の理論」と「分布測定の理論」が食い違う**ので、分岐はここに
     集める。
     """
+    if len(probs) < _MIN_HORSES.get(kind, 99):
+        return None
     fn = _THEORY.get(kind)
     return fn(probs) if fn else None
 
