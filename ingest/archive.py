@@ -221,6 +221,8 @@ def _append_exotic_edge_log(date: str, races: list[dict]) -> int:
     的中判定は券種ごとに違う:
 
         umatan      1着→2着 が順番どおり
+        umafuku     2 頭が順不同で 1-2 着を占める
+        wide        2 頭がともに 3 着以内（**見る着順が選んだ数より多い**）
         sanrenfuku  3 頭が順不同で 1-3 着を占める
         sanrentan   3 頭が順番どおり 1-2-3 着
 
@@ -260,26 +262,62 @@ def _append_exotic_edge_log(date: str, races: list[dict]) -> int:
     return len(rows)
 
 
+# 券種ごとの「選ぶ頭数」と「何着まで見るか」。**この 2 つは別物。**
+#
+# 一致しないのはワイドだけで、**2 頭選んで 3 着まで見る**（3 着以内に 2 頭
+# 入れば当たり）。見る着順を点数で代用すると 1-2 着しか見ず、判定が厳しく
+# なる（#56 の判定後に発見）。
+#
+# 頭数も持つのは、券種と点数が食い違う入力を弾くため。持たないと
+# 「三連複に 2 頭」がワイドと同じ枝に落ちて当たり扱いになる。
+_EXOTIC_SHAPE = {
+    #            頭数, 着数
+    "umatan":     (2, 2),
+    "umafuku":    (2, 2),
+    "wide":       (2, 3),   # ← ここだけ食い違う
+    "sanrenfuku": (3, 3),
+    "sanrentan":  (3, 3),
+}
+
+# 順序を問う券種。ここに無いものは順不同。
+_EXOTIC_ORDERED = ("umatan", "sanrentan")
+
+
 def _exotic_hit(kind: str, combo: str | None, order: list) -> bool | None:
     """その組が的中したか。着順が足りなければ None（外れではない）。
 
     **None と False を分ける。** 着順が取れていないレースを「外れ」に
     すると分母だけ増えて回収率が不当に下がる（`_append_edge_log` が
     pos 無しを外れにしないのと同じ理由）。
+
+    **選んだ点数と見る着順は別。** ワイドは 2 頭選んで 3 着まで見る。
+    `len(picked)` で代用すると 1-2 着しか見ないので、3 着に入った側が
+    外れ扱いになる。足りない着順の判定も点数ではなく着数で決める
+    （ワイドは 2 着までしか無ければ当落が確定しないので None）。
+
+    **券種に合わない点数・重複馬番は None。** 判定できない入力を
+    False にすると外れとして数えられてしまう（同上の理由）。
     """
     if not combo or not kind:
         return None
+    shape = _EXOTIC_SHAPE.get(kind)
+    if shape is None:
+        return None
+    horses, places = shape
     try:
         picked = [int(x) for x in combo.split("-")]
     except ValueError:
         return None
-    need = len(picked)
-    if len(order) < need:
+    if len(picked) != horses or len(set(picked)) != horses:
         return None
-    top = order[:need]
-    if kind in ("sanrenfuku", "umafuku", "wide"):
-        return sorted(picked) == sorted(top)
-    return picked == top        # umatan / sanrentan は順番どおり
+    if len(order) < places:
+        return None
+    top = order[:places]
+    if kind in _EXOTIC_ORDERED:
+        return picked == top                    # 順番どおり
+    if horses == places:
+        return sorted(picked) == sorted(top)    # 順不同・全着を占める
+    return all(p in top for p in picked)        # ワイド: 選んだ分だけ入れば当たり
 
 
 def _exists(key: str) -> bool:
