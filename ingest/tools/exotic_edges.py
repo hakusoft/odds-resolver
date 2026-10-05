@@ -74,8 +74,7 @@ import boto3
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from ingest.exotic import (edges, exacta_probabilities,  # noqa: E402
-                           market_from_odds, trio_probabilities)
+from ingest.exotic import edges, market_from_odds, theory_for  # noqa: E402
 from ingest.form import market_probabilities  # noqa: E402
 
 REGION = "ap-northeast-1"
@@ -155,11 +154,17 @@ def race_edges_exotic(race):
             continue
         if kind in ("umatan", "umafuku", "wide") and width != 2:
             continue
-        if width == 2:
-            theory = exacta_probabilities(probs)
-        elif width == 3:
-            theory = trio_probabilities(probs)
-        else:
+        # **券種で選ぶ。幅で選んではいけない。** ワイドと馬複は馬単と同じ
+        # 2 頭キーだが、当たりの定義が違うので理論式も違う（#160）:
+        #
+        #   umatan   1着→2着（順序あり）      exacta
+        #   umafuku  1-2 着を順不同で占める   exacta の両順を足す
+        #   wide     2 頭がともに 3 着以内     wide（trio の畳み込み）
+        #
+        # 幅で分岐していた頃は wide も umafuku も exacta で計算していた。
+        # ワイドは実際の確率が 4〜8 倍あるので、edge が系統的に負へずれる。
+        theory = theory_for(kind, probs)
+        if theory is None:
             continue
         market = market_from_odds(parsed)
         e = edges(theory, market)

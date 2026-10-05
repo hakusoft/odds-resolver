@@ -7,7 +7,9 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
 from ingest.exotic import (  # noqa: E402
-    edges, exacta_probabilities, market_from_odds, trio_probabilities,
+    edges, exacta_probabilities, exotic_threshold, is_exotic_edge_pick,
+    is_exotic_edge_pick_for, market_from_odds, quinella_probabilities,
+    theory_for, trio_probabilities, wide_probabilities,
 )
 
 
@@ -53,6 +55,204 @@ def test_trio_key_is_sorted():
 def test_trio_stronger_combo_ranks_higher():
     t = trio_probabilities({1: 0.4, 2: 0.3, 3: 0.2, 4: 0.1})
     assert t[(1, 2, 3)] > t[(2, 3, 4)]
+
+
+# --- ワイド（#160 / #56 の次の測定先）---------------------------------------
+
+def _wide_direct(probs, a, b):
+    """Harville の順列から直接。**畳み込みとは独立な経路で検算するため。**
+
+    `wide_probabilities` は三連複を畳んで出しているので、同じ関数を使って
+    検証すると実装の誤りを一緒に見落とす（#137 の教訓: 点数が合っていても
+    正しさの証拠にならない）。ここでは 1-3 着の順列を全部回して数える。
+    """
+    from itertools import permutations
+    tot = 0.0
+    for i, j, k in permutations(probs, 3):
+        if a not in (i, j, k) or b not in (i, j, k):
+            continue
+        pi, pj, pk = probs[i], probs[j], probs[k]
+        r1 = 1.0 - pi
+        r2 = r1 - pj
+        if r1 <= 0 or r2 <= 0:
+            continue
+        tot += pi * (pj / r1) * (pk / r2)
+    return tot
+
+
+def test_wide_matches_direct_enumeration():
+    """**畳み込みが素朴な定義と一致すること。** 独立な経路で検算する。"""
+    p = {1: 0.35, 2: 0.25, 3: 0.20, 4: 0.12, 5: 0.08}
+    w = wide_probabilities(p)
+    for (a, b), got in w.items():
+        assert got == pytest.approx(_wide_direct(p, a, b)), f"{a}-{b}"
+
+
+def test_wide_sums_to_three_not_one():
+    """**ワイドの合計は 3.0。** 馬単・三連複（1.0）と性質が違う。
+
+    3 着以内の 3 頭からペアが 3 組できるので、毎レース必ず 3 組当たる。
+    market_from_odds は合計 1.0 に正規化するので、edges で比べると
+    log(3) のゲタが全組に乗る。**馬単の閾値を流用できない根拠。**
+    """
+    p = {1: 0.4, 2: 0.3, 3: 0.2, 4: 0.1}
+    w = wide_probabilities(p)
+    assert len(w) == 6                      # 4C2
+    assert sum(w.values()) == pytest.approx(3.0)
+
+
+def test_wide_key_is_sorted():
+    """順不同なのでキーは昇順に正規化する（三連複と同じ）。"""
+    w = wide_probabilities({4: 0.4, 1: 0.3, 2: 0.2, 3: 0.1})
+    assert all(k == tuple(sorted(k)) for k in w)
+    assert (1, 4) in w and (4, 1) not in w
+
+
+def test_wide_degenerates_at_three_horses():
+    """**3 頭立てでは全組が確率 1.0。** 3 頭しかいなければ全員 3 着以内。
+
+    理論 1.0 に対し市場は控除率ぶん 1.0 未満なので edge が必ず正に出て、
+    **歪みではなく頭数の少なさを拾う**。この退化があるため `theory_for`
+    は 3 頭立てのワイドを計算しない（下の門のテスト）。
+
+    ここは素の関数の性質を記録しておくためのテスト。
+    """
+    w = wide_probabilities({1: 0.5, 2: 0.3, 3: 0.2})
+    assert len(w) == 3                                  # 3C2
+    assert all(v == pytest.approx(1.0) for v in w.values())
+
+
+def test_wide_is_normal_from_four_horses():
+    """4 頭立てなら退化しない（均等配分で 0.5）。門を 4 に置いた根拠。"""
+    w = wide_probabilities({1: 0.25, 2: 0.25, 3: 0.25, 4: 0.25})
+    assert all(v == pytest.approx(0.5) for v in w.values())
+
+
+def test_wide_probability_never_exceeds_one():
+    """個々の組の確率は 1.0 を超えない（合計が 3.0 でも各項は確率）。"""
+    p = {1: 0.5, 2: 0.25, 3: 0.15, 4: 0.06, 5: 0.04}
+    for k, v in wide_probabilities(p).items():
+        assert 0.0 <= v <= 1.0, f"{k}={v}"
+
+
+def test_wide_stronger_pair_ranks_higher():
+    w = wide_probabilities({1: 0.4, 2: 0.3, 3: 0.2, 4: 0.1})
+    assert w[(1, 2)] > w[(3, 4)]
+
+
+def test_wide_beats_exacta_on_same_pair():
+    """**ワイドの方が当たりやすい。** 次の測定先に選んだ理由そのもの。
+
+    同じ 2 頭でも「3 着以内に 2 頭」は「1-2 着を順番どおり」より緩い。
+    #56 の判定（馬単 n=367 で的中 1 件）で検出力不足が分かったので、
+    的中率の高い帯を測りたい。
+    """
+    p = {1: 0.35, 2: 0.25, 3: 0.20, 4: 0.12, 5: 0.08}
+    w = wide_probabilities(p)
+    e = exacta_probabilities(p)
+    assert w[(1, 2)] > e[(1, 2)] + e[(2, 1)]
+
+
+def test_quinella_folds_exacta_both_ways():
+    """馬複は馬単の両順の和。合計は 1.0 のまま。"""
+    p = {1: 0.5, 2: 0.3, 3: 0.2}
+    q = quinella_probabilities(p)
+    e = exacta_probabilities(p)
+    assert q[(1, 2)] == pytest.approx(e[(1, 2)] + e[(2, 1)])
+    assert sum(q.values()) == pytest.approx(1.0)
+    assert len(q) == 3                      # 3C2
+
+
+# --- 券種ごとの理論式の振り分け（#160）------------------------------------
+
+def test_theory_for_picks_by_kind_not_width():
+    """**幅ではなく券種で選ぶ。** これを間違えたのが #160 の発端。
+
+    wide と umafuku は馬単と同じ 2 頭キーだが、当たりの定義が違うので
+    理論式も違う。幅で分岐すると両方 exacta になる。
+    """
+    p = {1: 0.35, 2: 0.25, 3: 0.20, 4: 0.12, 5: 0.08}
+    assert theory_for("umatan", p) == exacta_probabilities(p)
+    assert theory_for("umafuku", p) == quinella_probabilities(p)
+    assert theory_for("wide", p) == wide_probabilities(p)
+    assert theory_for("sanrenfuku", p) == trio_probabilities(p)
+
+
+def test_theory_for_wide_differs_from_exacta():
+    """ワイドを exacta で計算すると 4〜8 倍ずれる。取り違えを固定で防ぐ。"""
+    p = {1: 0.35, 2: 0.25, 3: 0.20, 4: 0.12, 5: 0.08}
+    w = theory_for("wide", p)
+    e = theory_for("umatan", p)
+    assert w[(1, 2)] > e[(1, 2)] * 3        # 実測 4.4 倍
+
+
+def test_theory_for_returns_none_without_formula():
+    """三連単は理論式が無い。順不同で代用せず None を返す。"""
+    p = {1: 0.4, 2: 0.3, 3: 0.2, 4: 0.1}
+    assert theory_for("sanrentan", p) is None
+    assert theory_for("tansho", p) is None
+
+
+def test_theory_for_refuses_three_horse_wide():
+    """**3 頭立てのワイドは計算しない。** 退化して歪みを測れない。
+
+    全組が確率 1.0 になるので edge が必ず正に出る。「市場が安い」のでは
+    なく「3 頭しかいない」ことを拾っているだけ。4 頭からは成立する。
+    """
+    p3 = {1: 0.5, 2: 0.3, 3: 0.2}
+    assert theory_for("wide", p3) is None
+    assert theory_for("sanrenfuku", p3) is None     # 組が 1 つで比較に意味が無い
+
+    p4 = {1: 0.4, 2: 0.3, 3: 0.2, 4: 0.1}
+    assert theory_for("wide", p4) is not None
+    assert theory_for("sanrenfuku", p4) is not None
+
+
+def test_theory_for_two_horse_kinds_still_work():
+    """馬単・馬複は 2 頭で成立する（門はワイドと三連複だけ）。"""
+    p2 = {1: 0.6, 2: 0.4}
+    assert theory_for("umatan", p2) is not None
+    assert theory_for("umafuku", p2) is not None
+    assert theory_for("wide", p2) is None
+
+
+# --- 券種ごとの閾値（#160）-------------------------------------------------
+
+def test_threshold_exists_only_for_measured_kind():
+    """**測っていない券種の閾値は None。** 馬単だけが測ってある。"""
+    assert exotic_threshold("umatan") == pytest.approx(-0.560 + 2 * 0.928)
+    assert exotic_threshold("wide") is None
+    assert exotic_threshold("sanrenfuku") is None
+
+
+def test_pick_for_never_fires_without_threshold():
+    """**閾値が無い券種は記録しない。** どれだけ大きい edge でも False。
+
+    記録してから閾値を決めると、分布ではなく回収率を見て決められて
+    しまう（#56 の「先に決めた基準を動かさない」が崩れる）。
+    オッズの取得は続くので分布は後から出せる。
+    """
+    assert is_exotic_edge_pick_for("wide", 99.0) is False
+    assert is_exotic_edge_pick_for("wide", 1.5) is False
+    assert is_exotic_edge_pick_for("sanrentan", 99.0) is False
+
+
+def test_pick_for_uses_the_kinds_threshold():
+    """馬単は既存の閾値で判定する（挙動を変えない）。"""
+    t = exotic_threshold("umatan")
+    assert is_exotic_edge_pick_for("umatan", t) is True
+    assert is_exotic_edge_pick_for("umatan", t - 0.001) is False
+    assert is_exotic_edge_pick_for("umatan", None) is False
+
+
+def test_pick_for_matches_legacy_on_umatan():
+    """**既存の is_exotic_edge_pick と馬単では一致する。**
+
+    #56 の判定に使った経路なので、ここがずれると過去の記録と
+    比較できなくなる。
+    """
+    for e in (-2.0, 0.0, 1.29, 1.295, 1.296, 2.0, 5.0):
+        assert is_exotic_edge_pick_for("umatan", e) == is_exotic_edge_pick(e)
 
 
 def test_market_from_odds_normalizes():
