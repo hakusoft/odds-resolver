@@ -316,6 +316,122 @@ def test_exotic_matrix_returns_none_when_absent():
     assert parse_exotic_matrix("<html><body>no table</body></html>") is None
 
 
+# ワイドのオッズ（#163）。範囲で載るので一覧表から読む
+def _pop_list_html(rows, table_class="dataTable"):
+    """人気順一覧の最小 HTML。rows は [(順位, 組番, オッズ)]。"""
+    body = "".join(
+        f"<tr><td>{r}</td><td>{combo}</td><td>{odds}</td></tr>"
+        for r, combo, odds in rows)
+    return (f'<table class="{table_class}"><tr><th>順位</th><th>組番</th>'
+            f'<th>オッズ</th></tr>{body}</table>')
+
+
+def test_exotic_wide_reads_range_as_lower_bound():
+    """**範囲は下限を採る。** 回収率を過大評価しない（#163・kaz 判断）。"""
+    from ingest.parse import parse_exotic_wide
+    html = _pop_list_html([(1, "2-3", "3.2-3.5"), (2, "1-2", "10.8-11.9")])
+    m = parse_exotic_wide(html)
+    assert m == {(2, 3): 3.2, (1, 2): 10.8}
+
+
+def test_exotic_wide_key_is_sorted():
+    """キーは昇順に正規化する（ワイドは順不同）。"""
+    from ingest.parse import parse_exotic_wide
+    m = parse_exotic_wide(_pop_list_html([(1, "7-3", "5.0-5.4")]))
+    assert m == {(3, 7): 5.0}
+
+
+def test_exotic_wide_accepts_single_value():
+    """単一値も受ける。発売直後や確定後は範囲にならない可能性がある。"""
+    from ingest.parse import parse_exotic_wide
+    m = parse_exotic_wide(_pop_list_html([(1, "1-2", "3.5")]))
+    assert m == {(1, 2): 3.5}
+
+
+def test_exotic_wide_zero_becomes_none():
+    """0 は「まだ無い」。行列パーサと同じ扱い。"""
+    from ingest.parse import parse_exotic_wide
+    m = parse_exotic_wide(_pop_list_html([
+        (1, "1-2", "0.0"), (2, "1-3", "0.0-0.0"), (3, "2-3", "4.0-4.2")]))
+    assert m[(1, 2)] is None
+    assert m[(1, 3)] is None
+    assert m[(2, 3)] == 4.0
+
+
+def test_exotic_wide_separator_is_ambiguous_but_resolved():
+    """**組番とオッズの区切りがどちらも `-`。** 列で区別する。
+
+    組番 "2-3" とオッズ "10.8-11.9" が同じ区切り。位置（2 列目が組番、
+    3 列目がオッズ）で決めており、値の形では判定しない。
+    """
+    from ingest.parse import parse_exotic_wide
+    # オッズ側が整数の範囲でも組番と混同しない
+    m = parse_exotic_wide(_pop_list_html([(1, "1-2", "10-12")]))
+    assert m == {(1, 2): 10.0}
+
+
+def test_exotic_wide_merges_split_lists():
+    """一覧も複数の表に分かれて載る。全てマージする。
+
+    実測（11 頭立て）で一覧表が 2 枚あり、合わせて 55 組 = 11C2 だった。
+    """
+    from ingest.parse import parse_exotic_wide
+    a = _pop_list_html([(1, "1-2", "3.0-3.2")])
+    b = _pop_list_html([(2, "1-3", "4.0-4.2"), (3, "2-3", "5.0-5.5")])
+    m = parse_exotic_wide(a + b)
+    assert len(m) == 3
+    assert m[(1, 3)] == 4.0 and m[(2, 3)] == 5.0
+
+
+def test_exotic_wide_ignores_matrix_table():
+    """**行列表は読まない。** 範囲を float にできず 0 点になる経路を避ける。
+
+    実ページには行列表と一覧表の両方がある。行列側を読むと #163 の
+    症状（0 点）が再発する。
+    """
+    from ingest.parse import parse_exotic_wide
+    grid = _matrix_html([1, 2], [(1, ["-", "10.8-11.9"]),
+                                 (2, ["3.2-3.5", "-"])])
+    assert parse_exotic_wide(grid) is None
+
+    # 一覧が併記されていれば一覧だけを読む
+    lst = _pop_list_html([(1, "1-2", "3.2-3.5")])
+    m = parse_exotic_wide(grid + lst)
+    assert m == {(1, 2): 3.2}
+
+
+def test_exotic_wide_rejects_three_horse_combo():
+    """3 頭の組（三連複の一覧）は読まない。券種を取り違えない。"""
+    from ingest.parse import parse_exotic_wide
+    html = _pop_list_html([(1, "1-2-3", "12.3-13.0")])
+    assert parse_exotic_wide(html) is None
+
+
+def test_exotic_wide_rejects_duplicate_horse():
+    """同じ馬番を 2 回含む組は読まない（買えない組）。"""
+    from ingest.parse import parse_exotic_wide
+    assert parse_exotic_wide(_pop_list_html([(1, "2-2", "3.0-3.2")])) is None
+
+
+def test_exotic_wide_skips_malformed_rows():
+    """壊れた行は飛ばし、残りを拾う。1 行の破損で全体を捨てない。"""
+    from ingest.parse import parse_exotic_wide
+    html = _pop_list_html([
+        (1, "1-2", "3.0-3.2"),
+        (2, "x-y", "4.0-4.2"),      # 組番が数字でない
+        (3, "1-3", "なし"),          # オッズが読めない
+        (4, "2-3", "5.0-5.5")])
+    m = parse_exotic_wide(html)
+    assert m[(1, 2)] == 3.0 and m[(2, 3)] == 5.0
+    assert m[(1, 3)] is None         # 行は残るが値は None
+    assert (0, 0) not in m
+
+
+def test_exotic_wide_returns_none_when_absent():
+    from ingest.parse import parse_exotic_wide
+    assert parse_exotic_wide("<html><body>no table</body></html>") is None
+
+
 # 3 頭券種のオッズ（#137）
 def _triple_table(nums, first):
     """1 頭目を固定した表 1 枚。**実物の geometry に合わせてある。**
