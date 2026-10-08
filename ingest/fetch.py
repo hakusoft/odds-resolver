@@ -30,7 +30,8 @@ from .exotic import (edges as exotic_edges, is_exotic_edge_pick_for,
 from .form import is_edge_pick, market_probabilities, race_edges
 from .metrics import support_metrics
 from .parse import (parse_exotic_matrix, parse_exotic_triple,
-                    parse_horse_records, parse_odds, parse_result)
+                    parse_exotic_wide, parse_horse_records, parse_odds,
+                    parse_result)
 from .surge import detect_surges
 
 _TABLE = boto3.resource("dynamodb").Table(os.environ["TABLE_NAME"])
@@ -724,6 +725,12 @@ def _run_exotic(now: float, date: str, races: list[dict]) -> dict | None:
     if kind in TRIPLE_KINDS:
         matrix = parse_exotic_triple(html, ordered=(kind == "sanrentan"),
                                      conflicts=conflicts)
+    elif kind == "wide":
+        # **ワイドは行列表を読まない（#163）。** オッズが範囲で載るため
+        # （"10.8-11.9"）、行列用のパーサは float に変換できず 0 点を返す。
+        # 組番が文字列で載る人気順一覧から読む。
+        # 一覧は重複して載るので、値の食い違いは conflicts に出る
+        matrix = parse_exotic_wide(html, conflicts=conflicts)
     else:
         matrix = parse_exotic_matrix(html)
 

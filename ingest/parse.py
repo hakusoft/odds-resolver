@@ -485,6 +485,105 @@ def parse_exotic_matrix(html: str) -> dict | None:
     return out or None
 
 
+# ワイドのオッズは**範囲**で載る（"10.8-11.9"）。3 着以内の組み合わせ次第で
+# 配当が変わるため、確定前は下限と上限が示される。
+#
+# **区切りが組番と同じ `-`** なので、組番（"2-3"）と混同しないよう別の正規表現で
+# 扱う。小数点を含む側がオッズ。
+_RANGE_ODDS_RE = re.compile(r"^(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)$")
+
+# 人気順一覧の見出し。組番が文字列で載る独立な経路（#163）。
+_POP_LIST_HEAD = ("順位", "組番", "オッズ")
+
+
+def parse_exotic_wide(html: str,
+                      conflicts: list | None = None) -> dict | None:
+    """ワイドのオッズを {(a, b): odds} で返す（#163）。キーは昇順。
+
+    **行列表ではなく人気順一覧を読む。** ワイドのオッズは範囲で載るため
+    （"10.8-11.9"）、`parse_exotic_matrix` は float に変換できずに 0 点を
+    返していた。
+
+        行列表   head ['1','2',...]  row ['2','10.8-11.9','3','3.2-3.5',...]
+        一覧表   順位 / 組番 / オッズ  → '1' / '2-3' / '3.2-3.5'
+
+    一覧は**組番が文字列で載る独立な経路**なので、#137 の「列分割された表で
+    軸を取り違える」事故が起きない。実測で 11 頭立て 55 組（11C2）が一致。
+
+    **範囲は下限を採る**（kaz 判断・2026-10-08）。回収率を過大評価しない方に
+    倒す。中点だと分布の仮定が入り、「効果あり」が出たときに疑いが残る。
+    **閾値を決める前に固定した。** 後から変えると #56 の作法（先に決めた
+    基準を動かさない）が崩れる。
+
+    一覧は複数の表に分かれて載る。**実ページでは一覧表が 2 枚あり、全 36 組が
+    同じ値で重複していた**（レスポンシブ表示の都合か）。最初を採るが、
+    **値が食い違えば `conflicts` へ積む**（#137 の教訓: 黙って上書きすると
+    軸の取り違えに気づけない）。
+
+    単一値（"3.5"）も受ける。発売直後や確定後は範囲にならない可能性がある
+    ため。0.0 は None（`parse_exotic_matrix` と同じ。発売前は「まだ無い」で
+    あって「人気が無い」ではない）。
+
+    想定外の構造なら None。
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    out = {}
+    for table in soup.find_all("table", class_="dataTable"):
+        rows = table.find_all("tr")
+        if len(rows) < 2:
+            continue
+        head = [c.get_text(strip=True) for c in rows[0].find_all(["th", "td"])]
+        if tuple(head[:3]) != _POP_LIST_HEAD:
+            continue  # 行列表や出馬表は読まない
+        for tr in rows[1:]:
+            cells = [c.get_text(strip=True) for c in tr.find_all(["th", "td"])]
+            if len(cells) < 3:
+                continue
+            key = _parse_pair_key(cells[1])
+            if key is None:
+                continue
+            odds = _parse_range_odds(cells[2])
+            # **同じ組が重複して載る。** 実ページでは一覧表が 2 枚あり、
+            # 全 36 組が同じ値で重複していた（レスポンシブ表示の都合か）。
+            # 最初を採るが、**値が食い違えば黙って潰さず conflicts へ積む**
+            # （#137 の教訓: 上書きすると軸の取り違えに気づけない）
+            if key in out:
+                if conflicts is not None and out[key] != odds:
+                    conflicts.append((key, out[key], odds))
+                continue
+            out[key] = odds
+    return out or None
+
+
+def _parse_pair_key(s: str) -> tuple[int, int] | None:
+    """"2-3" を (2, 3) に。2 頭でなければ・重複していれば None。"""
+    parts = s.split("-")
+    if len(parts) != 2:
+        return None
+    try:
+        a, b = int(parts[0]), int(parts[1])
+    except ValueError:
+        return None
+    if a == b:
+        return None
+    return (a, b) if a < b else (b, a)
+
+
+def _parse_range_odds(s: str) -> float | None:
+    """"10.8-11.9" → 10.8（下限）。"3.5" → 3.5。0 と想定外は None。
+
+    **下限を採る。** 回収率を過大評価しないため（#163）。
+    """
+    m = _RANGE_ODDS_RE.match(s)
+    if m:
+        v = float(m.group(1))
+        return v if v > 0 else None
+    if _PAIR_ODDS_RE.match(s):
+        v = float(s)
+        return v if v > 0 else None
+    return None
+
+
 def parse_exotic_triple(html: str, ordered: bool = False,
                         conflicts: list | None = None) -> dict | None:
     """三連複・三連単の行列オッズを {(a, b, c): odds} で返す（#137）。
