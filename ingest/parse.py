@@ -496,7 +496,8 @@ _RANGE_ODDS_RE = re.compile(r"^(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)$")
 _POP_LIST_HEAD = ("順位", "組番", "オッズ")
 
 
-def parse_exotic_wide(html: str) -> dict | None:
+def parse_exotic_wide(html: str,
+                      conflicts: list | None = None) -> dict | None:
     """ワイドのオッズを {(a, b): odds} で返す（#163）。キーは昇順。
 
     **行列表ではなく人気順一覧を読む。** ワイドのオッズは範囲で載るため
@@ -514,7 +515,10 @@ def parse_exotic_wide(html: str) -> dict | None:
     **閾値を決める前に固定した。** 後から変えると #56 の作法（先に決めた
     基準を動かさない）が崩れる。
 
-    一覧は複数の表に分かれて載る（会場・列の都合）。全てマージする。
+    一覧は複数の表に分かれて載る。**実ページでは一覧表が 2 枚あり、全 36 組が
+    同じ値で重複していた**（レスポンシブ表示の都合か）。最初を採るが、
+    **値が食い違えば `conflicts` へ積む**（#137 の教訓: 黙って上書きすると
+    軸の取り違えに気づけない）。
 
     単一値（"3.5"）も受ける。発売直後や確定後は範囲にならない可能性がある
     ため。0.0 は None（`parse_exotic_matrix` と同じ。発売前は「まだ無い」で
@@ -539,8 +543,15 @@ def parse_exotic_wide(html: str) -> dict | None:
             if key is None:
                 continue
             odds = _parse_range_odds(cells[2])
-            # 同じ組が複数の表に出たら最初を採る（分割の重複を想定）
-            out.setdefault(key, odds)
+            # **同じ組が重複して載る。** 実ページでは一覧表が 2 枚あり、
+            # 全 36 組が同じ値で重複していた（レスポンシブ表示の都合か）。
+            # 最初を採るが、**値が食い違えば黙って潰さず conflicts へ積む**
+            # （#137 の教訓: 上書きすると軸の取り違えに気づけない）
+            if key in out:
+                if conflicts is not None and out[key] != odds:
+                    conflicts.append((key, out[key], odds))
+                continue
+            out[key] = odds
     return out or None
 
 

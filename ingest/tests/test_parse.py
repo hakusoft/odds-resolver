@@ -371,16 +371,52 @@ def test_exotic_wide_separator_is_ambiguous_but_resolved():
 
 
 def test_exotic_wide_merges_split_lists():
-    """一覧も複数の表に分かれて載る。全てマージする。
-
-    実測（11 頭立て）で一覧表が 2 枚あり、合わせて 55 組 = 11C2 だった。
-    """
+    """一覧も複数の表に分かれて載る。全てマージする。"""
     from ingest.parse import parse_exotic_wide
     a = _pop_list_html([(1, "1-2", "3.0-3.2")])
     b = _pop_list_html([(2, "1-3", "4.0-4.2"), (3, "2-3", "5.0-5.5")])
     m = parse_exotic_wide(a + b)
     assert len(m) == 3
     assert m[(1, 3)] == 4.0 and m[(2, 3)] == 5.0
+
+
+def test_exotic_wide_dedups_repeated_list():
+    """**一覧表は重複して載る。** 実ページでは 2 枚あり全組が同じ値だった。
+
+    組数が 2 倍にならず、値も変わらないこと。
+    """
+    from ingest.parse import parse_exotic_wide
+    rows = [(1, "1-2", "3.0-3.2"), (2, "1-3", "4.0-4.2")]
+    m = parse_exotic_wide(_pop_list_html(rows) + _pop_list_html(rows))
+    assert len(m) == 2
+    assert m[(1, 2)] == 3.0 and m[(1, 3)] == 4.0
+
+
+def test_exotic_wide_reports_conflict_not_silently_overwrite():
+    """**値が食い違えば conflicts へ積む。** 黙って上書きしない（#137）。
+
+    重複が同値なら conflicts は空。違う値が来たら軸の取り違えや
+    ページ構造の変化を疑うべきなので、記録に残す。
+    """
+    from ingest.parse import parse_exotic_wide
+    same = _pop_list_html([(1, "1-2", "3.0-3.2")])
+    conf = []
+    parse_exotic_wide(same + same, conflicts=conf)
+    assert conf == []                       # 同値なら黙って通す
+
+    other = _pop_list_html([(1, "1-2", "9.9-10.1")])
+    conf2 = []
+    m = parse_exotic_wide(same + other, conflicts=conf2)
+    assert m[(1, 2)] == 3.0                 # 最初を採る
+    assert conf2 == [((1, 2), 3.0, 9.9)]    # 食い違いは残す
+
+
+def test_exotic_wide_works_without_conflicts_arg():
+    """conflicts を渡さなくても落ちない（既定は None）。"""
+    from ingest.parse import parse_exotic_wide
+    rows = [(1, "1-2", "3.0-3.2")]
+    m = parse_exotic_wide(_pop_list_html(rows) + _pop_list_html(rows))
+    assert m == {(1, 2): 3.0}
 
 
 def test_exotic_wide_ignores_matrix_table():

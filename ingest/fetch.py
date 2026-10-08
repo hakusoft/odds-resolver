@@ -728,8 +728,9 @@ def _run_exotic(now: float, date: str, races: list[dict]) -> dict | None:
     elif kind == "wide":
         # **ワイドは行列表を読まない（#163）。** オッズが範囲で載るため
         # （"10.8-11.9"）、行列用のパーサは float に変換できず 0 点を返す。
-        # 組番が文字列で載る人気順一覧から読む
-        matrix = parse_exotic_wide(html)
+        # 組番が文字列で載る人気順一覧から読む。
+        # 一覧は重複して載るので、値の食い違いは conflicts に出る
+        matrix = parse_exotic_wide(html, conflicts=conflicts)
     else:
         matrix = parse_exotic_matrix(html)
 
