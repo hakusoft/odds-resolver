@@ -145,6 +145,48 @@ def test_criteria_come_from_judge_tool():
     assert min_hits("wide") == 10
 
 
+def test_exotic_progress_reads_files_once():
+    """**ファイルは 1 回しか読まない。** 券種ごとに読み直さない。
+
+    券種を足した瞬間に実行時間が線形に増えるのを防ぐ（毎朝走るので効く）。
+    実測で 9.7 秒 → 0.5 秒、2 券種でも増えないことを確認した。
+    """
+    import ingest.tools.morning_probe as mp
+
+    reads = []
+
+    class _Sess:
+        pass
+
+    def _keys(sess, bucket, prefix):
+        return ["exotic_edge/20261017.json", "exotic_edge/20261018.json"]
+
+    def _get(sess, bucket, key):
+        reads.append(key)
+        return {"rows": [
+            {"kind": "wide", "hit": True, "odds": 20.0},
+            {"kind": "umatan", "hit": False, "odds": 500.0},
+            {"kind": "wide", "hit": None, "odds": 30.0},   # 数えない
+        ]}
+
+    orig_keys, orig_get = mp._list_keys, mp._get_json
+    orig_watch = mp.WATCH_EXOTIC_KINDS
+    try:
+        mp._list_keys, mp._get_json = _keys, _get
+        mp.WATCH_EXOTIC_KINDS = ["wide", "umatan"]
+        out = mp.exotic_progress(_Sess(), "b")
+    finally:
+        mp._list_keys, mp._get_json = orig_keys, orig_get
+        mp.WATCH_EXOTIC_KINDS = orig_watch
+
+    # 2 券種を見ても 2 ファイルしか読まない（4 回ではない）
+    assert len(reads) == 2
+    assert out["wide"]["n"] == 2        # hit None は除く
+    assert out["wide"]["hits"] == 2
+    assert out["umatan"]["n"] == 2
+    assert out["umatan"]["hits"] == 0
+
+
 def test_exotic_reports_readiness_but_never_judges():
     """**到達したと言うだけ。判定はしない**（1 回きりで取り消せない・#106）。"""
     md = render(_obs_x(ready=True))

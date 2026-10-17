@@ -207,33 +207,46 @@ def exotic_progress(sess, bucket):
     """
     from .judge_exotic_edge import MIN_N, min_hits
 
-    out = {}
-    for kind in WATCH_EXOTIC_KINDS:
-        n = hits = 0
-        for key in _list_keys(sess, bucket, "exotic_edge/"):
-            if not key.endswith(".json"):
-                continue
-            try:
-                d = _get_json(sess, bucket, key)
-            except Exception:
+    watch = set(WATCH_EXOTIC_KINDS)
+    n = collections.Counter()
+    hits = collections.Counter()
+
+    def _one(key):
+        try:
+            return _get_json(sess, bucket, key)
+        except Exception:
+            return None
+
+    keys = [k for k in _list_keys(sess, bucket, "exotic_edge/")
+            if k.endswith(".json")]
+    # **ファイルは 1 回しか読まない。** 券種ごとに読み直すと、券種を足した
+    # 瞬間に実行時間が線形に増える（毎朝走るので効く）
+    with futures.ThreadPoolExecutor(max_workers=16) as ex:
+        for d in ex.map(_one, keys):
+            if not d:
                 continue
             for r in d.get("rows") or []:
-                if r.get("kind") != kind:
+                kind = r.get("kind")
+                if kind not in watch:
                     continue
                 # hit が None は着順が足りなかったレース（取消・中止）。
                 # 外れではないので数えない（judge_exotic_edge と同じ）
                 if r.get("hit") is None:
                     continue
-                n += 1
+                n[kind] += 1
                 if r.get("hit"):
-                    hits += 1
+                    hits[kind] += 1
+
+    out = {}
+    for kind in WATCH_EXOTIC_KINDS:
         need_hits = min_hits(kind)
+        got_n, got_hits = n[kind], hits[kind]
         out[kind] = {
-            "n": n, "required_n": MIN_N,
-            "hits": hits, "required_hits": need_hits,
-            "remaining_n": max(0, MIN_N - n),
-            "remaining_hits": max(0, need_hits - hits),
-            "ready": n >= MIN_N and hits >= need_hits,
+            "n": got_n, "required_n": MIN_N,
+            "hits": got_hits, "required_hits": need_hits,
+            "remaining_n": max(0, MIN_N - got_n),
+            "remaining_hits": max(0, need_hits - got_hits),
+            "ready": got_n >= MIN_N and got_hits >= need_hits,
         }
     return out
 
