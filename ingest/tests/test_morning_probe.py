@@ -106,41 +106,79 @@ def test_jst_today_is_ahead_of_utc():
     assert len(jst_today(ts)) == 8
 
 
-def _obs_j(ready=False):
+def _obs_x(ready=False, hits_short=False):
+    """組合せの進捗を載せた観測。ready / 的中不足 / n 不足を作れる。"""
     o = _obs()
-    lim = 200 if ready else 174
-    o["judgment"] = {
-        "issue": 148, "min_n": 200,
-        "groups": {
-            "B": {"n_races": 556, "limiting_n": lim,
-                  "remaining": max(0, 200 - lim),
-                  "thin_bins": 0 if ready else 1, "ready": ready},
-            "C": {"n_races": 784, "limiting_n": 181, "remaining": 19,
-                  "thin_bins": 1, "ready": False},
+    if ready:
+        n, hits = 312, 14
+    elif hits_short:
+        n, hits = 312, 3        # n は足りるが的中が足りない（#56 の構造）
+    else:
+        n, hits = 186, 7
+    o["exotic"] = {
+        "wide": {
+            "n": n, "required_n": 300,
+            "hits": hits, "required_hits": 10,
+            "remaining_n": max(0, 300 - n),
+            "remaining_hits": max(0, 10 - hits),
+            "ready": n >= 300 and hits >= 10,
         },
     }
     return o
 
 
-def test_judge_min_n_is_200():
-    """#148 で数字を見る前に決めた基準。緩めるなら検証をやり直す。"""
-    from ingest.tools.morning_probe import JUDGE_MIN_N
-    assert JUDGE_MIN_N == 200
+def test_watch_kinds_excludes_judged():
+    """**判定済みの券種は追わない。** 到達を言い続けると狼少年になる。
+
+    #148 は 2026-09-24 に判定済みだったのに毎朝「判定できる」と出ていた
+    （#167）。馬単（#56）も 2026-09-30 に判定済みなので入れない。
+    """
+    from ingest.tools.morning_probe import WATCH_EXOTIC_KINDS
+    assert "wide" in WATCH_EXOTIC_KINDS
+    assert "umatan" not in WATCH_EXOTIC_KINDS
 
 
-def test_judgment_reports_readiness_but_never_judges():
+def test_criteria_come_from_judge_tool():
+    """**基準は judge_exotic_edge から読む。** 書き写すと食い違う。"""
+    from ingest.tools.judge_exotic_edge import MIN_N, min_hits
+    assert MIN_N == 300
+    assert min_hits("wide") == 10
+
+
+def test_exotic_reports_readiness_but_never_judges():
     """**到達したと言うだけ。判定はしない**（1 回きりで取り消せない・#106）。"""
-    md = render(_obs_j(ready=True))
+    md = render(_obs_x(ready=True))
     assert "判定できる" in md
+    sec = md.split("### 組合せの判定待ち")[1]
     # 判定の結果らしき語が出ていないこと
-    for word in ("効果あり", "効果なし", "勝率", "回収率"):
-        assert word not in md.split("### 判定待ち")[1]
+    for word in ("効果あり", "効果なし", "回収率", "払戻"):
+        assert word not in sec
 
 
-def test_judgment_not_ready_says_so():
-    md = render(_obs_j(ready=False))
+def test_exotic_never_shows_rate():
+    """**率は出さない。** 判定前に結果を見せない（--check と同じ作法）。"""
+    md = render(_obs_x(ready=True))
+    sec = md.split("### 組合せの判定待ち")[1]
+    assert "%" not in sec
+    assert "率は出さない" in sec
+
+
+def test_exotic_not_ready_says_so():
+    md = render(_obs_x())
     assert "まだ基準に達していない" in md
     assert "判定できる" not in md
+
+
+def test_exotic_blocked_when_hits_short():
+    """**n が足りても的中が足りなければ到達ではない（#165）。**
+
+    #56 はこの状態で判定し、的中 1 件の当落で回収率が 107% → 43% に
+    振れた。残り的中数が表に出ること。
+    """
+    md = render(_obs_x(hits_short=True))
+    assert "まだ基準に達していない" in md
+    sec = md.split("### 組合せの判定待ち")[1]
+    assert "| 7 |" in sec or "7" in sec     # 残り的中 10-3=7 が出る
 
 
 def test_delta_table_columns_align():
