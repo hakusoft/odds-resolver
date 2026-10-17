@@ -219,10 +219,55 @@ def test_theory_for_two_horse_kinds_still_work():
 # --- 券種ごとの閾値（#160）-------------------------------------------------
 
 def test_threshold_exists_only_for_measured_kind():
-    """**測っていない券種の閾値は None。** 馬単だけが測ってある。"""
+    """**測っていない券種の閾値は None。** 馬単とワイドは測ってある。"""
     assert exotic_threshold("umatan") == pytest.approx(-0.560 + 2 * 0.928)
-    assert exotic_threshold("wide") is None
+    assert exotic_threshold("wide") == pytest.approx(0.423 + 1.5 * 0.955)
     assert exotic_threshold("sanrenfuku") is None
+    assert exotic_threshold("umafuku") is None
+
+
+def test_wide_threshold_is_fixed():
+    """**ワイドの閾値は先に決めた値（#165）。** 回収率を見る前に固定した。
+
+    2026-10-08〜13 の 10,121 点から 平均 +0.423 / σ 0.955。
+    **+1.5σ を採った**（馬単は +2σ だが、絞り込みの程度を揃えた:
+    ワイド 1.03 点/レース 対 馬単 0.88 点/レース）。
+    """
+    from ingest.exotic import WIDE_EDGE_MEAN, WIDE_EDGE_SD
+    assert (WIDE_EDGE_MEAN, WIDE_EDGE_SD) == (0.423, 0.955)
+    assert exotic_threshold("wide") == pytest.approx(1.8555)
+
+
+def test_wide_threshold_differs_from_umatan():
+    """**馬単の閾値を流用していない。** 理論確率の合計が違うため。
+
+    ワイドは合計 3.0 なので log(3) ≒ +1.099 のゲタが乗る。実測の平均差
+    +1.0557 がこれとほぼ一致した。
+    """
+    import math
+    tw, tu = exotic_threshold("wide"), exotic_threshold("umatan")
+    assert tw > tu
+    # ゲタを引いても一致しない（倍率が違うので当然。流用でないことの確認）
+    assert abs((tw - math.log(3)) - tu) > 0.1
+
+
+def test_wide_pick_fires_at_threshold():
+    """閾値ちょうどで記録される（境界は含む）。"""
+    t = exotic_threshold("wide")
+    assert is_exotic_edge_pick_for("wide", t) is True
+    assert is_exotic_edge_pick_for("wide", t - 0.001) is False
+    assert is_exotic_edge_pick_for("wide", None) is False
+
+
+def test_wide_pick_does_not_use_umatan_threshold():
+    """**馬単の閾値では発火しない。** ゲタのぶんで誤爆しないこと。
+
+    ワイドの edge は log(3) のゲタで全体が正に寄る。馬単の閾値
+    （+1.295）を当てると歪みでなく正規化の違いを拾う。
+    """
+    tu = exotic_threshold("umatan")
+    assert is_exotic_edge_pick_for("umatan", tu) is True
+    assert is_exotic_edge_pick_for("wide", tu) is False   # +1.295 では足りない
 
 
 def test_pick_for_never_fires_without_threshold():
@@ -231,10 +276,13 @@ def test_pick_for_never_fires_without_threshold():
     記録してから閾値を決めると、分布ではなく回収率を見て決められて
     しまう（#56 の「先に決めた基準を動かさない」が崩れる）。
     オッズの取得は続くので分布は後から出せる。
+
+    ワイドは #165 で測って閾値を入れたので、ここでは未測定の券種で見る。
     """
-    assert is_exotic_edge_pick_for("wide", 99.0) is False
-    assert is_exotic_edge_pick_for("wide", 1.5) is False
+    assert is_exotic_edge_pick_for("sanrenfuku", 99.0) is False
+    assert is_exotic_edge_pick_for("sanrenfuku", 1.5) is False
     assert is_exotic_edge_pick_for("sanrentan", 99.0) is False
+    assert is_exotic_edge_pick_for("umafuku", 99.0) is False
 
 
 def test_pick_for_uses_the_kinds_threshold():

@@ -9,7 +9,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
 from ingest.tools.judge_exotic_edge import (  # noqa: E402
-    MIN_N, tally, verdict)
+    MIN_HITS, MIN_N, min_hits, tally, verdict)
 
 
 def _rows(n, hits=0, odds=10.0):
@@ -49,6 +49,63 @@ def test_verdict_no_effect_at_exactly_100():
 def test_verdict_effect_when_payback_over_100():
     # 300 点中 31 的中 × オッズ 10.0 = 310 / 300 = 103.3%
     assert verdict(tally(_rows(300, hits=31, odds=10.0))) == "効果あり"
+
+
+# --- 的中数の要件（#165）---------------------------------------------------
+
+def test_min_hits_is_fixed_per_kind():
+    """**券種ごとに先に決めた基準。** 判定日に緩めるのを防ぐ。"""
+    assert MIN_HITS["wide"] == 10
+    assert MIN_HITS["umatan"] == 0       # 判定済み。遡って変えない
+    assert min_hits("wide") == 10
+    assert min_hits("sanrenfuku") == 0   # 未定の券種は n だけで判定
+
+
+def test_wide_blocked_when_hits_too_few():
+    """**#56 の失敗をここで止める。** n は足りても的中が足りなければ判定しない。
+
+    馬単は n=367 / 的中 1 件で「効果あり（107.36%）」が出たが、5 日後に
+    n=806 / 的中 1 件のまま 48.88% へ落ちた。1 件の当落で結論が振れる
+    状態で回収率を読んではいけない。
+    """
+    # n は足りている。的中 1 件で回収率 107% を作る（#56 と同じ構造）
+    t = tally(_rows(367, hits=1, odds=394.0))
+    assert t["n"] >= MIN_N
+    assert t["payback"] > 1.0            # 107% 相当
+    assert verdict(t, "wide") == "判定不可（的中 1 件 < 10 件）"
+
+
+def test_wide_judged_once_hits_reached():
+    """的中が基準に達すれば判定する。"""
+    t = tally(_rows(300, hits=10, odds=25.0))
+    assert verdict(t, "wide") == "効果なし"     # 250/300 = 83.3%
+    t2 = tally(_rows(300, hits=10, odds=35.0))
+    assert verdict(t2, "wide") == "効果あり"    # 350/300 = 116.7%
+
+
+def test_wide_n_shortage_reported_before_hits():
+    """n も的中も足りないときは n 不足を先に言う（直す順が決まる）。"""
+    t = tally(_rows(100, hits=1, odds=10.0))
+    assert verdict(t, "wide") == "判定不可（n 不足）"
+
+
+def test_umatan_verdict_unchanged():
+    """**馬単の判定は変えない。** 2026-09-30 に判定済み。
+
+    遡って基準を変えると「後から都合よく動かした」ことになる。
+    #56 の判定を今の基準で再計算できてしまわないようにする。
+    """
+    # #56 の判定時と同じ形（n=367 / 的中 1 件 / オッズ 394）
+    t = tally(_rows(367, hits=1, odds=394.0))
+    assert verdict(t, "umatan") == "効果あり"   # 当時と同じ結論
+    assert verdict(t) == "効果あり"             # kind 無しでも同じ
+
+
+def test_verdict_without_kind_ignores_hits():
+    """kind を渡さなければ的中数を見ない（後方互換）。"""
+    t = tally(_rows(300, hits=1, odds=400.0))
+    assert verdict(t) == "効果あり"
+    assert verdict(t, "wide").startswith("判定不可（的中")
 
 
 def test_tally_payback_uses_raw_odds():
