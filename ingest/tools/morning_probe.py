@@ -37,9 +37,15 @@ NAME = "odds-resolver"
 # T-45 と T-15 は密度によらず 100% を保つので、崩れたら本物の異常。
 WATCH_SLOTS = ["T-45", "T-15"]
 
-# #148 で先に決めた判定基準。**数字を見る前に決めたもので、緩めない。**
-# 緩めるなら検証をやり直す（#106 と同じ作法）。
-JUDGE_MIN_N = 200
+# 組合せの歪み（#56 / #165）の前向きログを追う券種。
+#
+# **基準（n と的中数）は judge_exotic_edge から読む。** ここに書き写すと
+# 片方を直したときに食い違い、「達したのに言わない／達していないのに言う」
+# が起きる。
+#
+# 判定済みの券種は入れない。到達を言い続けると狼少年になり、本当に判定
+# すべき時に気づけない（#167 の #148 がそうなっていた）。
+WATCH_EXOTIC_KINDS = ["wide"]
 
 
 def jst_today(ts=None):
@@ -179,28 +185,31 @@ def forward_progress(sess, bucket):
             "recent": per[-5:], "latest": keys[-1].split("/")[-1] if keys else None}
 
 
-def judgment_queue(sess, bucket):
-    """検証待ちの仮説が判定基準に達したかを数える（#148）。
+def exotic_progress(sess, bucket):
+    """組合せの前向きログ（#56 / #165）が判定基準に達したかを数える。
 
     **到達したかを言うだけで、判定はしない。** 判定は 1 回きりで取り消せず、
     やり直すと「後から的を描く」ことになる（#106 の作法）。人間が手元で行う。
 
-    #148 で先に決めた基準:
+    **率は出さない。** `judge_exotic_edge --check` と同じ作法で、判定前に
+    回収率を見せない（率を見ると「まだ届いていないが数字は見た」状態になる）。
 
-    - 対象は B(8-9頭) と C(10-11頭) の 2 区分
-    - **全 7 帯が n≥200** で判定可能
-    - 律速は `0.50-1.00` 帯（全体の 3% しか入らないため・#147）
-    - 区分の境界は検証期間中に動かさない
+    基準は `judge_exotic_edge` の `MIN_N` / `MIN_HITS` をそのまま読む。
+    ここで別に持つと食い違う。
 
-    帯の定義は `ingest.metrics.calibration_bins` をそのまま使う。ここで
-    別に切ると既存の較正と比較できなくなる。
+    #165 で決めた基準（ワイド）:
+
+        n>=300 かつ 的中>=10 件
+
+    n=300 は行数の基準であって検出力の基準ではなかった（馬単は n=367 /
+    的中 1 件で「効果あり 107%」が出たが、n=1788 / 的中 4 件で 43% に
+    収束した）。そのため的中数も要件にしてある。
     """
-    from ..metrics import CALIB_BINS, calibration_bins
+    from .judge_exotic_edge import MIN_N, min_hits
 
-    keys = [k for k in _list_keys(sess, bucket, "races/") if k.endswith(".json")]
-    groups = {"B": (8, 9), "C": (10, 11)}
-    per = {g: [0] * (len(CALIB_BINS) - 1) for g in groups}
-    n_races = collections.Counter()
+    watch = set(WATCH_EXOTIC_KINDS)
+    n = collections.Counter()
+    hits = collections.Counter()
 
     def _one(key):
         try:
@@ -208,44 +217,38 @@ def judgment_queue(sess, bucket):
         except Exception:
             return None
 
-    # 1900 件超を直列で引くと数分かかる。読み取りだけなので並列で問題ない。
+    keys = [k for k in _list_keys(sess, bucket, "exotic_edge/")
+            if k.endswith(".json")]
+    # **ファイルは 1 回しか読まない。** 券種ごとに読み直すと、券種を足した
+    # 瞬間に実行時間が線形に増える（毎朝走るので効く）
     with futures.ThreadPoolExecutor(max_workers=16) as ex:
         for d in ex.map(_one, keys):
             if not d:
                 continue
-            snaps, res = d.get("snapshots") or [], d.get("result")
-            if not snaps or not res:
-                continue
-            odds = snaps[-1].get("odds")
-            if not odds:
-                continue
-            horses = d.get("horses") or []
-            g = next((g for g, (lo, hi) in groups.items()
-                      if lo <= len(horses) <= hi), None)
-            if g is None:
-                continue
-            win_num = next((r["num"] for r in res if r.get("pos") == 1), None)
-            win = next((i for i, h in enumerate(horses)
-                        if h.get("num") == win_num), None)
-            bins = calibration_bins(odds, win)
-            if bins is None:
-                continue
-            n_races[g] += 1
-            for i, x in enumerate(bins):
-                per[g][i] += x["n"]
+            for r in d.get("rows") or []:
+                kind = r.get("kind")
+                if kind not in watch:
+                    continue
+                # hit が None は着順が足りなかったレース（取消・中止）。
+                # 外れではないので数えない（judge_exotic_edge と同じ）
+                if r.get("hit") is None:
+                    continue
+                n[kind] += 1
+                if r.get("hit"):
+                    hits[kind] += 1
 
     out = {}
-    for g in groups:
-        row = per[g]
-        thin = [i for i, n in enumerate(row) if n < JUDGE_MIN_N]
-        out[g] = {
-            "n_races": n_races[g],
-            "limiting_n": row[-1],          # 0.50-1.00 帯（律速）
-            "remaining": max(0, JUDGE_MIN_N - row[-1]),
-            "thin_bins": len(thin),
-            "ready": not thin,
+    for kind in WATCH_EXOTIC_KINDS:
+        need_hits = min_hits(kind)
+        got_n, got_hits = n[kind], hits[kind]
+        out[kind] = {
+            "n": got_n, "required_n": MIN_N,
+            "hits": got_hits, "required_hits": need_hits,
+            "remaining_n": max(0, MIN_N - got_n),
+            "remaining_hits": max(0, need_hits - got_hits),
+            "ready": got_n >= MIN_N and got_hits >= need_hits,
         }
-    return {"issue": 148, "min_n": JUDGE_MIN_N, "groups": out}
+    return out
 
 
 def slot_health(sess, bucket, date):
@@ -294,7 +297,7 @@ def collect():
         "calibration": calibration(sess, bucket),
         "forward": forward_progress(sess, bucket),
         "slots": slot_health(sess, bucket, prev),
-        "judgment": judgment_queue(sess, bucket),
+        "exotic": exotic_progress(sess, bucket),
     }
 
 
@@ -342,21 +345,23 @@ def render(o, prev=None):
           f"- {fw['days']} 日 / {fw['n']} 頭 / 1日平均 {fw['per_day_avg']}",
           f"- 直近5日 {fw['recent']} / 最新 {fw['latest']}",
           "", "*率は出さない（#106 は判定済み。今は将来の別仮説のための記録）*"]
-    j = o.get("judgment")
-    if j:
-        L += ["", f"### 判定待ち（#{j['issue']}）", "",
-              f"律速は `0.50-1.00` 帯。全 7 帯が n≥{j['min_n']} で判定可能。", "",
-              "| 区分 | R | 律速帯 n | 残り | 薄い帯 |", "|---|---|---|---|---|"]
+    ex = o.get("exotic")
+    if ex:
+        L += ["", "### 組合せの判定待ち（#56 / #165）", "",
+              "| 券種 | n | 必要 | 的中 | 必要 | 残り n | 残り的中 |",
+              "|---|---|---|---|---|---|---|"]
         ready = []
-        for g, v in j["groups"].items():
-            L.append(f"| {g} | {v['n_races']} | {v['limiting_n']} | "
-                     f"{v['remaining']} | {v['thin_bins']} |")
+        for kind, v in ex.items():
+            L.append(f"| {kind} | {v['n']} | {v['required_n']} | "
+                     f"{v['hits']} | {v['required_hits']} | "
+                     f"{v['remaining_n']} | {v['remaining_hits']} |")
             if v["ready"]:
-                ready.append(g)
+                ready.append(kind)
         # **到達したと言うだけ。判定はしない**（1 回きりで取り消せない）。
         L.append("")
         L.append(f"**{', '.join(ready)} が基準に達した。判定できる。**"
                  if ready else "*まだ基準に達していない*")
+        L += ["", "*率は出さない（判定前に結果を見せない・`--check` と同じ作法）*"]
     return "\n".join(L)
 
 
