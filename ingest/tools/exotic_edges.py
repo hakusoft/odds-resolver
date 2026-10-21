@@ -153,21 +153,34 @@ def _last_pre_post_odds(race):
     post = _minutes(race.get("post_time"))
     if post is None:
         return (None, None)
+    def _pick(deadline):
+        """deadline 以前の最後のスナップショット。無ければ None。"""
+        best = None
+        for s in race.get("snapshots") or []:
+            if not str(s.get("slot") or "").startswith("T-"):
+                continue        # 確定（F）は締切後なので使わない
+            t = _minutes(s.get("time"))
+            if t is None or t > deadline:
+                continue
+            if best is None or t > best[0]:
+                best = (t, s)
+        return best
+
     # **記録時刻があればそれを使う。** 無ければ発走時刻で切る（取得は
     # 発走直前まで走り得るので、T-10 で切ると記録より手前のスナップ
     # ショットを選んでしまう）
-    deadline = _signaled_minutes(race)
-    if deadline is None:
-        deadline = post
-    best = None
-    for s in race.get("snapshots") or []:
-        if not str(s.get("slot") or "").startswith("T-"):
-            continue        # 確定（F）は締切後なので使わない
-        t = _minutes(s.get("time"))
-        if t is None or t > deadline:
-            continue
-        if best is None or t > best[0]:
-            best = (t, s)
+    sig = _signaled_minutes(race)
+    best = _pick(sig) if sig is not None else None
+    # **日付をまたぐと signaled_at が使えない。** epoch を JST の分に直すと
+    # 日付が落ちるので、発走 23:50 の記録が翌 00:05 なら deadline が 5 分に
+    # なり**全てのスナップショットが除外される**。候補が 0 件ならその疑いが
+    # あるので発走時刻で切り直す。
+    #
+    # 実データでは 22:00 以降の発走が 0 件なので起きていないが、ナイターが
+    # 延びれば起きうる。signaled_at に日付を持たせるのが本筋だが、記録済み
+    # データを変えられないのでここで吸収する。
+    if best is None:
+        best = _pick(post)
     if best is None:
         return (None, None)
     return (best[1].get("odds"), post - best[0])

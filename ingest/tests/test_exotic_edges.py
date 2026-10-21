@@ -86,6 +86,21 @@ def test_last_pre_post_odds_falls_back_to_post_time():
     assert odds == [2.0] * 4 and left == 4
 
 
+def test_last_pre_post_odds_ignores_midnight_crossing_signal():
+    """**日付をまたぐ signaled_at は使わない（#169 のセルフレビュー）。**
+
+    signaled_at は epoch なので JST の分に直すと日付が落ちる。発走 23:50 の
+    記録が翌 00:05 なら 5 分と 1430 分の比較になり、記録より手前を選ぶ。
+
+    実データでは 22:00 以降の発走が 0 件なので起きていないが、ナイターが
+    延びれば起きうる。post を超えたら発走時刻で切る。
+    """
+    r = _race([("T-15", [1.0] * 4), ("T-4", [2.0] * 4)],
+              {}, post="23:50", signaled="0:05")
+    odds, left = _last_pre_post_odds(r)
+    assert odds == [2.0] * 4 and left == 4      # 発走時刻で切った
+
+
 def test_last_pre_post_odds_excludes_post_deadline():
     """発走後（F）は採らない。確定値だが『結果より先』の担保が崩れる。"""
     r = _race([("T-6", [1.0] * 4), ("F", [9.9] * 4)], {})
