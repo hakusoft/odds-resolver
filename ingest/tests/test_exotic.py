@@ -221,21 +221,23 @@ def test_theory_for_two_horse_kinds_still_work():
 def test_threshold_exists_only_for_measured_kind():
     """**測っていない券種の閾値は None。** 馬単とワイドは測ってある。"""
     assert exotic_threshold("umatan") == pytest.approx(-0.560 + 2 * 0.928)
-    assert exotic_threshold("wide") == pytest.approx(0.423 + 1.5 * 0.955)
+    assert exotic_threshold("wide") == pytest.approx(0.766 + 1.5 * 0.777)
     assert exotic_threshold("sanrenfuku") is None
     assert exotic_threshold("umafuku") is None
 
 
 def test_wide_threshold_is_fixed():
-    """**ワイドの閾値は先に決めた値（#165）。** 回収率を見る前に固定した。
+    """**ワイドの閾値は先に決めた値（#165 → #169 で引き直し）。**
 
-    2026-10-08〜13 の 10,121 点から 平均 +0.423 / σ 0.955。
-    **+1.5σ を採った**（馬単は +2σ だが、絞り込みの程度を揃えた:
-    ワイド 1.03 点/レース 対 馬単 0.88 点/レース）。
+    2026-10-08〜21 の 28,711 点から 平均 +0.766 / σ 0.777。
+
+    **#165 の値（+0.423 / 0.955）は使えなかった。** 分布測定ツールが
+    記録側と違う単勝スナップショットを見ていたため（#169）。揃えたら
+    分布が動いた。
     """
     from ingest.exotic import WIDE_EDGE_MEAN, WIDE_EDGE_SD
-    assert (WIDE_EDGE_MEAN, WIDE_EDGE_SD) == (0.423, 0.955)
-    assert exotic_threshold("wide") == pytest.approx(1.8555)
+    assert (WIDE_EDGE_MEAN, WIDE_EDGE_SD) == (0.766, 0.777)
+    assert exotic_threshold("wide") == pytest.approx(1.9315)
 
 
 def test_wide_threshold_differs_from_umatan():

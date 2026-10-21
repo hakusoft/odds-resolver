@@ -194,7 +194,8 @@ def exotic_progress(sess, bucket):
     **率は出さない。** `judge_exotic_edge --check` と同じ作法で、判定前に
     回収率を見せない（率を見ると「まだ届いていないが数字は見た」状態になる）。
 
-    基準は `judge_exotic_edge` の `MIN_N` / `MIN_HITS` をそのまま読む。
+    基準は `judge_exotic_edge` の `min_n` / `min_hits` をそのまま読む。
+    **券種ごとに違う**（ワイドは n>=500・#169）。
     ここで別に持つと食い違う。
 
     #165 で決めた基準（ワイド）:
@@ -205,9 +206,13 @@ def exotic_progress(sess, bucket):
     的中 1 件で「効果あり 107%」が出たが、n=1788 / 的中 4 件で 43% に
     収束した）。そのため的中数も要件にしてある。
     """
-    from .judge_exotic_edge import MIN_N, min_hits
+    from ..exotic import exotic_threshold
+    from .judge_exotic_edge import min_hits, min_n
 
     watch = set(WATCH_EXOTIC_KINDS)
+    # **いまの閾値で絞る（#169）。** 旧閾値で記録された行が残っているので、
+    # 混ぜると judge_exotic_edge の --check と食い違う
+    thr = {k: exotic_threshold(k) for k in watch}
     n = collections.Counter()
     hits = collections.Counter()
 
@@ -233,20 +238,26 @@ def exotic_progress(sess, bucket):
                 # 外れではないので数えない（judge_exotic_edge と同じ）
                 if r.get("hit") is None:
                     continue
+                t = thr.get(kind)
+                if t is not None:
+                    e = r.get("edge")
+                    if e is None or float(e) < t:
+                        continue    # 旧閾値で記録された行
                 n[kind] += 1
                 if r.get("hit"):
                     hits[kind] += 1
 
     out = {}
     for kind in WATCH_EXOTIC_KINDS:
+        need_n = min_n(kind)
         need_hits = min_hits(kind)
         got_n, got_hits = n[kind], hits[kind]
         out[kind] = {
-            "n": got_n, "required_n": MIN_N,
+            "n": got_n, "required_n": need_n,
             "hits": got_hits, "required_hits": need_hits,
-            "remaining_n": max(0, MIN_N - got_n),
+            "remaining_n": max(0, need_n - got_n),
             "remaining_hits": max(0, need_hits - got_hits),
-            "ready": got_n >= MIN_N and got_hits >= need_hits,
+            "ready": got_n >= need_n and got_hits >= need_hits,
         }
     return out
 

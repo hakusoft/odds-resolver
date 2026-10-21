@@ -80,10 +80,9 @@ from ingest.form import market_probabilities  # noqa: E402
 REGION = "ap-northeast-1"
 PREFIX = "races/"
 
-# 締切前のスナップショットとして採る最大の分。単勝と組合せを同じ時点で
-# 比べたいので、組合せの取得時点（EXOTIC_SLOT_MINUTES = 10）に寄せる。
-# それ以前の単勝を使うと「別の瞬間の市場」と比べることになる。
-SLOT_MAX_MIN = 10
+# 組合せを取得するスロット（分）。fetch の EXOTIC_SLOT_MINUTES と同じ値。
+# ここを変えるなら fetch 側も変える（別の瞬間の市場と比べることになる）。
+EXOTIC_SLOT_MINUTES = 10
 
 
 def _s3():
@@ -99,25 +98,79 @@ def _parse_key(s):
     return t if len(t) in (2, 3) and len(set(t)) == len(t) else None
 
 
-def _last_pre_post_odds(race):
-    """締切前の最終スナップショットの単勝オッズを返す。無ければ None。
+def _minutes(hhmm):
+    """"15:20" を分に。想定外なら None。"""
+    try:
+        h, m = (int(x) for x in str(hhmm).split(":"))
+    except (ValueError, AttributeError):
+        return None
+    return h * 60 + m
 
-    slot は "T-10" のようなラベル。T-10 以内で最も遅いものを採る。
+
+def _signaled_minutes(race):
+    """組合せを取得した時刻（JST の分）。記録が無ければ None。
+
+    `exotic_edges`（閾値超えの組）の `signaled_at` から引く。**閾値超えが
+    0 件のレースには無い**ので、その場合は呼び出し側で発走時刻から推定する。
     """
+    import datetime
+    for e in race.get("exotic_edges") or []:
+        ts = e.get("signaled_at")
+        if ts is None:
+            continue
+        t = datetime.datetime.fromtimestamp(int(ts) + 9 * 3600, datetime.UTC)
+        return t.hour * 60 + t.minute
+    return None
+
+
+def _last_pre_post_odds(race):
+    """**組合せを取得した時点で最新だったスナップショット**の単勝オッズ。
+
+    記録側（`fetch._record_exotic_edges`）は `_latest_snapshot` で
+    **その瞬間の最新**を使う。`exotic_edges.signaled_at` にその時刻が
+    残っているので、それ以前の最後のスナップショットを採れば記録と揃う。
+
+    **`signaled_at` が無いレースがある**（閾値超えが 0 件だった場合）。
+    その場合は発走時刻で切る。取得は `0 < 残り分 <= EXOTIC_SLOT_MINUTES`
+    で走るので、発走までに存在したスナップショットが候補になる。
+
+    **以前は「T-10 以内で最も遅いもの」を採っていた（#169）。** それは
+    記録時点ではなく締切直前（実測で 34/36 レースが T-2）になり、
+    記録と別の市場を見ることになる。同じレースで選ばれる組が完全に
+    食い違っていた:
+
+        20261017-sg-01（発走 15:20・記録は 15:11 JST）
+          記録        1-3, 1-7   ← T-15（time 15:05）を見ている
+          旧実装      1-4, 4-5   ← T-2（time 15:18）を見ていた
+          共通        0 点
+
+    **T-10 スロットが欠けるレースがある**（#143・2 券種にするとほぼ 0%）。
+    その場合 T-15 が最新になるので、slot ラベルではなく `time` で選ぶ。
+
+    返り値は (オッズ列, 発走までの残り分)。残り分は観測用で、判定には
+    使わない。
+    """
+    post = _minutes(race.get("post_time"))
+    if post is None:
+        return (None, None)
+    # **記録時刻があればそれを使う。** 無ければ発走時刻で切る（取得は
+    # 発走直前まで走り得るので、T-10 で切ると記録より手前のスナップ
+    # ショットを選んでしまう）
+    deadline = _signaled_minutes(race)
+    if deadline is None:
+        deadline = post
     best = None
     for s in race.get("snapshots") or []:
-        slot = str(s.get("slot") or "")
-        if not slot.startswith("T-"):
+        if not str(s.get("slot") or "").startswith("T-"):
+            continue        # 確定（F）は締切後なので使わない
+        t = _minutes(s.get("time"))
+        if t is None or t > deadline:
             continue
-        try:
-            m = int(slot[2:])
-        except ValueError:
-            continue
-        if m > SLOT_MAX_MIN:
-            continue
-        if best is None or m < best[0]:
-            best = (m, s)
-    return (best[1].get("odds"), best[0]) if best else (None, None)
+        if best is None or t > best[0]:
+            best = (t, s)
+    if best is None:
+        return (None, None)
+    return (best[1].get("odds"), post - best[0])
 
 
 def race_edges_exotic(race):
@@ -131,6 +184,21 @@ def race_edges_exotic(race):
 
     horses = race.get("horses") or []
     nums = [h.get("num") for h in horses]
+    # **長さが違うレースは捨てる（#169）。** S3 の snapshots は odds だけを
+    # 持ち horses を持たないので、取消馬が出た回のオッズ列は horses より
+    # 短くなる。zip は黙って短い方で止まるため、**末尾の馬番が落ちて別の
+    # 組を計算してしまう**:
+    #
+    #   horses  [1..10]   odds 9 要素  → zip で 10 番が消える
+    #   → その 10 番を含む組の理論確率が None になり、記録と食い違う
+    #
+    # 記録側（fetch._latest_snapshot）は DynamoDB の同じ項目から odds と
+    # horses を読み、`len(nums) != len(odds)` なら None を返している。
+    # ここも同じ防御を置く。実測で 11 / 418 レース（2.6%）が該当。
+    #
+    # 根本解決は archive が snapshots に horses を焼くこと（別件）。
+    if len(nums) != len(odds):
+        return {}
     pm = market_probabilities(odds)
     # 単勝の支持率を {馬番: 確率} に。取消・未発売は落とす
     probs = {n: p for n, p in zip(nums, pm) if n and p}

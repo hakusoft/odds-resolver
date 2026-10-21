@@ -9,7 +9,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
 from ingest.tools.judge_exotic_edge import (  # noqa: E402
-    MIN_HITS, MIN_N, min_hits, tally, verdict)
+    MIN_HITS, MIN_N, MIN_N_BY_KIND, min_hits, min_n, tally, verdict)
 
 
 def _rows(n, hits=0, odds=10.0):
@@ -29,7 +29,15 @@ def test_verdict_blocks_below_min_n():
     # 回収率が 100% を大きく超えていても、n が足りなければ判定しない
     t = tally(_rows(MIN_N - 1, hits=MIN_N - 1, odds=10.0))
     assert t["payback"] > 1.0
-    assert verdict(t) == "判定不可（n 不足）"
+    assert verdict(t).startswith("判定不可（n ")
+
+
+def test_min_n_is_per_kind():
+    """**券種ごとの n（#169）。** ワイドは 500、既定は 300。"""
+    assert MIN_N_BY_KIND["wide"] == 500
+    assert min_n("wide") == 500
+    assert min_n("umatan") == MIN_N == 300     # 判定済み。据え置き
+    assert min_n("sanrenfuku") == 300          # 未定の券種は既定
 
 
 def test_verdict_no_effect_when_payback_under_100():
@@ -68,25 +76,36 @@ def test_wide_blocked_when_hits_too_few():
     n=806 / 的中 1 件のまま 48.88% へ落ちた。1 件の当落で結論が振れる
     状態で回収率を読んではいけない。
     """
-    # n は足りている。的中 1 件で回収率 107% を作る（#56 と同じ構造）
-    t = tally(_rows(367, hits=1, odds=394.0))
-    assert t["n"] >= MIN_N
-    assert t["payback"] > 1.0            # 107% 相当
+    # n は足りている（ワイドは 500 必要）。的中 1 件で回収率 107% を作る
+    t = tally(_rows(500, hits=1, odds=537.0))
+    assert t["n"] >= min_n("wide")
+    assert t["payback"] > 1.0
     assert verdict(t, "wide") == "判定不可（的中 1 件 < 10 件）"
 
 
 def test_wide_judged_once_hits_reached():
-    """的中が基準に達すれば判定する。"""
-    t = tally(_rows(300, hits=10, odds=25.0))
-    assert verdict(t, "wide") == "効果なし"     # 250/300 = 83.3%
-    t2 = tally(_rows(300, hits=10, odds=35.0))
-    assert verdict(t2, "wide") == "効果あり"    # 350/300 = 116.7%
+    """n と的中の両方が基準に達すれば判定する。"""
+    t = tally(_rows(500, hits=10, odds=40.0))
+    assert verdict(t, "wide") == "効果なし"     # 400/500 = 80.0%
+    t2 = tally(_rows(500, hits=10, odds=55.0))
+    assert verdict(t2, "wide") == "効果あり"    # 550/500 = 110.0%
 
 
 def test_wide_n_shortage_reported_before_hits():
     """n も的中も足りないときは n 不足を先に言う（直す順が決まる）。"""
     t = tally(_rows(100, hits=1, odds=10.0))
-    assert verdict(t, "wide") == "判定不可（n 不足）"
+    assert verdict(t, "wide") == "判定不可（n 100 < 500）"
+
+
+def test_wide_n_300_is_not_enough():
+    """**ワイドは n=300 では足りない（#169）。** 的中が揃っていても。
+
+    分布を引き直したらオッズ帯が上がり、n=300 の期待的中が 6.1 件に
+    落ちた。500 で 10.2 件になる。
+    """
+    t = tally(_rows(300, hits=12, odds=40.0))
+    assert t["hits"] >= min_hits("wide")       # 的中は足りている
+    assert verdict(t, "wide") == "判定不可（n 300 < 500）"
 
 
 def test_umatan_verdict_unchanged():
@@ -101,11 +120,12 @@ def test_umatan_verdict_unchanged():
     assert verdict(t) == "効果あり"             # kind 無しでも同じ
 
 
-def test_verdict_without_kind_ignores_hits():
-    """kind を渡さなければ的中数を見ない（後方互換）。"""
+def test_verdict_without_kind_uses_defaults():
+    """kind を渡さなければ既定の MIN_N を使い、的中数を見ない（後方互換）。"""
     t = tally(_rows(300, hits=1, odds=400.0))
     assert verdict(t) == "効果あり"
-    assert verdict(t, "wide").startswith("判定不可（的中")
+    # ワイドとして見れば n が足りない（500 必要）
+    assert verdict(t, "wide") == "判定不可（n 300 < 500）"
 
 
 def test_tally_payback_uses_raw_odds():
@@ -129,11 +149,13 @@ def test_load_rows_drops_unresolved_and_other_kinds(monkeypatch):
     import json as _json
     from ingest.tools import judge_exotic_edge as J
 
+    # edge は馬単の閾値（+1.295）以上にする。#169 で閾値未満の行も
+    # 落とすようにしたため
     payload = {"rows": [
-        {"kind": "umatan", "hit": True, "odds": 10.0},
-        {"kind": "umatan", "hit": False, "odds": 5.0},
-        {"kind": "umatan", "hit": None, "odds": 7.0},      # 着順不足
-        {"kind": "sanrenfuku", "hit": True, "odds": 99.0},  # 別券種
+        {"kind": "umatan", "hit": True, "odds": 10.0, "edge": 2.0},
+        {"kind": "umatan", "hit": False, "odds": 5.0, "edge": 2.0},
+        {"kind": "umatan", "hit": None, "odds": 7.0, "edge": 2.0},   # 着順不足
+        {"kind": "sanrenfuku", "hit": True, "odds": 99.0, "edge": 2.0},  # 別券種
     ]}
 
     class _S3:
@@ -151,3 +173,39 @@ def test_load_rows_drops_unresolved_and_other_kinds(monkeypatch):
     assert len(rows) == 2                       # None と別券種は入らない
     assert all(r["kind"] == "umatan" for r in rows)
     assert all(r["hit"] is not None for r in rows)
+
+
+def test_load_rows_drops_below_current_threshold(monkeypatch):
+    """**いまの閾値を下回る行は落とす（#169）。**
+
+    閾値を引き直したとき、旧閾値で記録された行が残っている。混ぜると
+    「先に決めた閾値で記録した」ことにならない。
+
+    実データでは旧閾値 1.8555 の記録 568 点のうち、新閾値 1.9315 以上は
+    459 点だった。
+    """
+    import json as _json
+    from ingest.exotic import exotic_threshold
+    from ingest.tools import judge_exotic_edge as J
+
+    t = exotic_threshold("wide")
+    payload = {"rows": [
+        {"kind": "wide", "hit": True, "odds": 20.0, "edge": t},          # 境界
+        {"kind": "wide", "hit": False, "odds": 30.0, "edge": t + 0.5},
+        {"kind": "wide", "hit": True, "odds": 25.0, "edge": t - 0.001},  # 旧閾値
+        {"kind": "wide", "hit": False, "odds": 40.0, "edge": None},      # edge 無し
+    ]}
+
+    class _S3:
+        def list_objects_v2(self, **kw):
+            return {"Contents": [{"Key": "exotic_edge/20261017.json"}],
+                    "IsTruncated": False}
+
+        def get_object(self, **kw):
+            return {"Body": type("B", (), {
+                "read": staticmethod(lambda: _json.dumps(payload).encode())})()}
+
+    monkeypatch.setattr(J, "_get_s3", lambda: _S3())
+    rows = J.load_rows("b", "wide")
+    assert len(rows) == 2                    # 境界は含む、閾値未満と None は落とす
+    assert all(float(r["edge"]) >= t for r in rows)

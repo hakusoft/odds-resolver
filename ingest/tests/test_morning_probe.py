@@ -163,10 +163,11 @@ def test_exotic_progress_reads_files_once():
 
     def _get(sess, bucket, key):
         reads.append(key)
+        # edge は各券種の閾値以上にする（#169 で閾値未満を落とすため）
         return {"rows": [
-            {"kind": "wide", "hit": True, "odds": 20.0},
-            {"kind": "umatan", "hit": False, "odds": 500.0},
-            {"kind": "wide", "hit": None, "odds": 30.0},   # 数えない
+            {"kind": "wide", "hit": True, "odds": 20.0, "edge": 3.0},
+            {"kind": "umatan", "hit": False, "odds": 500.0, "edge": 3.0},
+            {"kind": "wide", "hit": None, "odds": 30.0, "edge": 3.0},  # 数えない
         ]}
 
     orig_keys, orig_get = mp._list_keys, mp._get_json
@@ -236,3 +237,36 @@ def test_delta_table_columns_align():
     header, sep = rows[0], rows[1]
     assert header.count("|") == sep.count("|")
     assert "| |" not in header  # 空セルを作らない
+
+
+def test_exotic_progress_drops_below_threshold():
+    """**いまの閾値を下回る行は数えない（#169）。**
+
+    旧閾値で記録された行が残っているので、混ぜると
+    judge_exotic_edge --check と食い違う。
+    """
+    import ingest.tools.morning_probe as mp
+    from ingest.exotic import exotic_threshold
+
+    t = exotic_threshold("wide")
+
+    def _keys(sess, bucket, prefix):
+        return ["exotic_edge/20261017.json"]
+
+    def _get(sess, bucket, key):
+        return {"rows": [
+            {"kind": "wide", "hit": True, "odds": 20.0, "edge": t},
+            {"kind": "wide", "hit": False, "odds": 30.0, "edge": t - 0.001},
+            {"kind": "wide", "hit": True, "odds": 25.0, "edge": None},
+        ]}
+
+    orig = mp._list_keys, mp._get_json, mp.WATCH_EXOTIC_KINDS
+    try:
+        mp._list_keys, mp._get_json = _keys, _get
+        mp.WATCH_EXOTIC_KINDS = ["wide"]
+        out = mp.exotic_progress(object(), "b")
+    finally:
+        mp._list_keys, mp._get_json, mp.WATCH_EXOTIC_KINDS = orig
+
+    assert out["wide"]["n"] == 1          # 境界だけ残る
+    assert out["wide"]["hits"] == 1
