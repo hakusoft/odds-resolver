@@ -212,8 +212,8 @@ def _commit() -> str | None:
     import subprocess
     try:
         return subprocess.run(
-            ["git", "describe", "--always", "--dirty", "--abbrev=40"], capture_output=True, text=True,
-            cwd=os.path.dirname(__file__), timeout=5,
+            ["git", "describe", "--always", "--dirty", "--abbrev=40"],
+            capture_output=True, text=True, cwd=os.path.dirname(__file__), timeout=5,
             check=True).stdout.strip() or None
     except Exception:
         return None
