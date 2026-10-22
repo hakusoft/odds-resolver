@@ -32,6 +32,8 @@ kaz が 2026-09-27 に決定。**この時点で exotic_edge ログは 1 行も�
   - **「馬単でダメだったから三連複で」は禁止。** 券種ごとに 1 回だけ
 - **回収率が 100% を跨いだら「効果なし」に倒す**（有意でないものを有りとしない）
 - **判定は 1 回だけ。** 「全体でダメだったからオッズ帯別で見る」は禁止
+  - **コードで強制する（#171）。** 判定は `judgments/exotic_edge/{kind}.json`
+    に条件付きで書き、既にあれば計算せず保存済みの結果を返す
 - **検証期間中は閾値も理論式も動かさない**
   - 動かせば分布の前提が変わり、検証はやり直し
   - **ワイドは一度引き直した（#169）。** 分布測定ツールが記録と違う単勝
@@ -67,6 +69,7 @@ kaz が 2026-09-27 に決定。**この時点で exotic_edge ログは 1 行も�
     python -m ingest.tools.judge_exotic_edge --kind umatan           # 判定（1 回）
 """
 import argparse
+import datetime
 import json
 import os
 import sys
@@ -135,6 +138,85 @@ MIN_HITS = {
 def min_hits(kind: str) -> int:
     """券種の最低的中数。定めていない券種は 0（n だけで判定）。"""
     return MIN_HITS.get(kind, 0)
+
+
+# **判定は 1 回だけ（#171）。** 作法として書くだけではコードは何度でも判定を
+# 打てた。判定結果を S3 に条件付き書き込み（IfNoneMatch="*"）で残し、既に
+# あれば新しく計算しない。
+JUDGMENT_PREFIX = "judgments/exotic_edge/"
+
+# judgments/ ができる前に判定した券種。**遡って S3 に書くのではなく、ここに
+# 固定する**（git の履歴で「後から書き換えていない」ことが示せる）。
+# 値は #56 の判定コメント（2026-09-30）の転記。
+PRIOR_JUDGMENTS = {
+    "umatan": {
+        "kind": "umatan", "n": 367, "hits": 1,
+        "hit_rate": 0.0027, "payback": 1.0736,
+        "required_n": 300, "required_hits": 0,
+        "threshold": 1.296,   # exotic_threshold("umatan")
+        "verdict": "効果あり",
+        "judged_at": "2026-09-30",
+        "note": "的中 1 件で作られた値。結論として使えない（#56）",
+    },
+}
+
+
+def judgment_key(kind: str) -> str:
+    return f"{JUDGMENT_PREFIX}{kind}.json"
+
+
+def _error_code(e) -> str:
+    return (getattr(e, "response", None) or {}).get("Error", {}).get("Code", "")
+
+
+def load_judgment(bucket: str, kind: str) -> dict | None:
+    """保存済みの判定。無ければ None。"""
+    if kind in PRIOR_JUDGMENTS:
+        return PRIOR_JUDGMENTS[kind]
+    try:
+        body = _get_s3().get_object(
+            Bucket=bucket, Key=judgment_key(kind))["Body"].read()
+    except Exception as e:
+        if _error_code(e) in ("NoSuchKey", "404"):
+            return None
+        raise
+    return json.loads(body)
+
+
+def save_judgment(bucket: str, kind: str, record: dict) -> dict | None:
+    """判定を 1 回だけ書く。書けたら None、先客がいればその判定を返す。
+
+    **先に読んでから書くだけでは足りない。** 読んだ後に別の実行が書く隙間が
+    残るので、書き込み自体を条件付きにする。
+    """
+    try:
+        _get_s3().put_object(
+            Bucket=bucket, Key=judgment_key(kind),
+            Body=json.dumps(record, ensure_ascii=False, indent=2).encode(),
+            ContentType="application/json",
+            IfNoneMatch="*")
+    except Exception as e:
+        if _error_code(e) in ("PreconditionFailed", "412",
+                              "ConditionalRequestConflict"):
+            return load_judgment(bucket, kind)
+        raise
+    return None
+
+
+def _commit() -> str | None:
+    """判定したコードの commit。取れなければ None（判定は止めない）。
+
+    **未コミットの変更があれば `-dirty` が付く。** 手元で基準を書き換えて
+    判定した場合に、記録から分かるようにするため。
+    """
+    import subprocess
+    try:
+        return subprocess.run(
+            ["git", "describe", "--always", "--dirty", "--abbrev=40"],
+            capture_output=True, text=True, cwd=os.path.dirname(__file__), timeout=5,
+            check=True).stdout.strip() or None
+    except Exception:
+        return None
 
 _s3 = None
 
@@ -242,6 +324,15 @@ def main(argv=None):
         print("DATA_BUCKET を渡すこと", file=sys.stderr)
         return 2
 
+    prior = load_judgment(a.bucket, a.kind)
+    if prior and not a.check:
+        # **新しく計算しない（#171）。** 計算すれば「いまの値」を見てしまい、
+        # 1 回きりの判定が形だけになる。保存済みの判定をそのまま返す
+        print(f"{a.kind} は判定済み（{prior.get('judged_at')}）。"
+              "再判定しない。保存済みの結果を表示する。", file=sys.stderr)
+        print(json.dumps(prior, ensure_ascii=False, indent=2))
+        return 0
+
     rows = load_rows(a.bucket, a.kind)
     t = tally(rows)
     need_n = min_n(a.kind)
@@ -257,6 +348,7 @@ def main(argv=None):
             "ready": t["n"] >= need_n and t["hits"] >= need_hits,
             "remaining_n": max(0, need_n - t["n"]),
             "remaining_hits": max(0, need_hits - t["hits"]),
+            "judged": prior is not None,
         }, ensure_ascii=False, indent=2))
         return 0
 
@@ -274,15 +366,28 @@ def main(argv=None):
               file=sys.stderr)
         return 1
 
-    print(json.dumps({
+    record = {
         "kind": a.kind,
         "n": t["n"],
         "hits": t["hits"],
         "hit_rate": round(t["hit_rate"], 4),
         "payback": round(t["payback"], 4),
+        "required_n": need_n,
         "required_hits": need_hits,
+        "threshold": exotic_threshold(a.kind),
         "verdict": verdict(t, a.kind),
-    }, ensure_ascii=False, indent=2))
+        "judged_at": datetime.datetime.now(
+            datetime.timezone.utc).isoformat(timespec="seconds"),
+        "commit": _commit(),
+    }
+    # **書けてから表示する（#171）。** 書けずに表示すると、記録の無い判定を
+    # 見たことになり、次の実行でもう 1 回打ててしまう
+    other = save_judgment(a.bucket, a.kind, record)
+    if other is not None:
+        print(f"{a.kind} は別の実行が先に判定した。そちらを表示する。",
+              file=sys.stderr)
+        record = other
+    print(json.dumps(record, ensure_ascii=False, indent=2))
     return 0
 
 

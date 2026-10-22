@@ -270,3 +270,42 @@ def test_exotic_progress_drops_below_threshold():
 
     assert out["wide"]["n"] == 1          # 境界だけ残る
     assert out["wide"]["hits"] == 1
+
+
+def test_judged_kind_is_not_ready():
+    """**判定済みなら「判定できる」と言わない（#171）。** #167 の狼少年を防ぐ。"""
+    import ingest.tools.morning_probe as mp
+    from ingest.exotic import exotic_threshold
+    from ingest.tools.judge_exotic_edge import judgment_key
+
+    t = exotic_threshold("wide")
+    rows = [{"kind": "wide", "hit": True, "odds": 20.0, "edge": t}] * 600
+
+    def _keys(sess, bucket, prefix):
+        if prefix.startswith("judgments/"):
+            return [judgment_key("wide")]
+        return ["exotic_edge/20261017.json"]
+
+    reads = []
+
+    def _get(sess, bucket, key):
+        reads.append(key)
+        return {"rows": rows}
+
+    orig = mp._list_keys, mp._get_json, mp.WATCH_EXOTIC_KINDS
+    try:
+        mp._list_keys, mp._get_json = _keys, _get
+        mp.WATCH_EXOTIC_KINDS = ["wide"]
+        out = mp.exotic_progress(object(), "b")
+    finally:
+        mp._list_keys, mp._get_json, mp.WATCH_EXOTIC_KINDS = orig
+
+    assert out["wide"]["judged"] is True
+    assert out["wide"]["ready"] is False
+    assert reads == ["exotic_edge/20261017.json"]   # 判定の中身は読まない
+
+    o = _obs_x(ready=True)
+    o["exotic"]["wide"].update(judged=True, ready=False)
+    md = render(o)
+    assert "判定できる" not in md
+    assert "判定済み" in md
