@@ -153,7 +153,7 @@ PRIOR_JUDGMENTS = {
         "kind": "umatan", "n": 367, "hits": 1,
         "hit_rate": 0.0027, "payback": 1.0736,
         "required_n": 300, "required_hits": 0,
-        "threshold": 1.295,
+        "threshold": 1.296,   # exotic_threshold("umatan")
         "verdict": "効果あり",
         "judged_at": "2026-09-30",
         "note": "的中 1 件で作られた値。結論として使えない（#56）",
@@ -204,11 +204,15 @@ def save_judgment(bucket: str, kind: str, record: dict) -> dict | None:
 
 
 def _commit() -> str | None:
-    """判定したコードの commit。取れなければ None（判定は止めない）。"""
+    """判定したコードの commit。取れなければ None（判定は止めない）。
+
+    **未コミットの変更があれば `-dirty` が付く。** 手元で基準を書き換えて
+    判定した場合に、記録から分かるようにするため。
+    """
     import subprocess
     try:
         return subprocess.run(
-            ["git", "rev-parse", "HEAD"], capture_output=True, text=True,
+            ["git", "describe", "--always", "--dirty", "--abbrev=40"], capture_output=True, text=True,
             cwd=os.path.dirname(__file__), timeout=5,
             check=True).stdout.strip() or None
     except Exception:

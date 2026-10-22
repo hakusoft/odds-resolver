@@ -333,6 +333,8 @@ def test_umatan_is_already_judged(monkeypatch, capsys):
     out = _json.loads(capsys.readouterr().out)
     assert out["judged_at"] == "2026-09-30"
     assert out["payback"] == 1.0736
+    from ingest.exotic import exotic_threshold
+    assert out["threshold"] == exotic_threshold("umatan")
     assert s3.puts == 0
 
 
