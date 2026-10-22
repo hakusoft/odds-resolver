@@ -207,7 +207,8 @@ def exotic_progress(sess, bucket):
     収束した）。そのため的中数も要件にしてある。
     """
     from ..exotic import exotic_threshold
-    from .judge_exotic_edge import min_hits, min_n
+    from .judge_exotic_edge import (JUDGMENT_PREFIX, PRIOR_JUDGMENTS,
+                                    judgment_key, min_hits, min_n)
 
     watch = set(WATCH_EXOTIC_KINDS)
     # **いまの閾値で絞る（#169）。** 旧閾値で記録された行が残っているので、
@@ -247,17 +248,24 @@ def exotic_progress(sess, bucket):
                 if r.get("hit"):
                     hits[kind] += 1
 
+    # **判定済みなら「判定できる」と言わない（#171）。** 言い続けると #167 と
+    # 同じ狼少年になる。中身は読まない（結果の率をここに持ち込まない）
+    judged_keys = set(_list_keys(sess, bucket, JUDGMENT_PREFIX))
+
     out = {}
     for kind in WATCH_EXOTIC_KINDS:
         need_n = min_n(kind)
         need_hits = min_hits(kind)
         got_n, got_hits = n[kind], hits[kind]
+        judged = kind in PRIOR_JUDGMENTS or judgment_key(kind) in judged_keys
         out[kind] = {
             "n": got_n, "required_n": need_n,
             "hits": got_hits, "required_hits": need_hits,
             "remaining_n": max(0, need_n - got_n),
             "remaining_hits": max(0, need_hits - got_hits),
-            "ready": got_n >= need_n and got_hits >= need_hits,
+            "ready": (not judged and got_n >= need_n
+                      and got_hits >= need_hits),
+            "judged": judged,
         }
     return out
 
@@ -361,17 +369,22 @@ def render(o, prev=None):
         L += ["", "### 組合せの判定待ち（#56 / #165）", "",
               "| 券種 | n | 必要 | 的中 | 必要 | 残り n | 残り的中 |",
               "|---|---|---|---|---|---|---|"]
-        ready = []
+        ready, judged = [], []
         for kind, v in ex.items():
             L.append(f"| {kind} | {v['n']} | {v['required_n']} | "
                      f"{v['hits']} | {v['required_hits']} | "
                      f"{v['remaining_n']} | {v['remaining_hits']} |")
-            if v["ready"]:
+            if v.get("judged"):
+                judged.append(kind)
+            elif v["ready"]:
                 ready.append(kind)
         # **到達したと言うだけ。判定はしない**（1 回きりで取り消せない）。
         L.append("")
+        if judged:
+            L.append(f"*{', '.join(judged)} は判定済み（`judgments/`）*")
         L.append(f"**{', '.join(ready)} が基準に達した。判定できる。**"
-                 if ready else "*まだ基準に達していない*")
+                 if ready else "*まだ基準に達していない*"
+                 if len(judged) < len(ex) else "*判定待ちは無い*")
         L += ["", "*率は出さない（判定前に結果を見せない・`--check` と同じ作法）*"]
     return "\n".join(L)
 
