@@ -6,6 +6,8 @@
 import pathlib
 import sys
 
+import pytest
+
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
 from ingest.tools.judge_exotic_edge import (  # noqa: E402
@@ -209,3 +211,139 @@ def test_load_rows_drops_below_current_threshold(monkeypatch):
     rows = J.load_rows("b", "wide")
     assert len(rows) == 2                    # 境界は含む、閾値未満と None は落とす
     assert all(float(r["edge"]) >= t for r in rows)
+
+
+# --- 判定は 1 回だけ（#171）-------------------------------------------------
+
+class _ClientError(Exception):
+    def __init__(self, code):
+        super().__init__(code)
+        self.response = {"Error": {"Code": code}}
+
+
+class _JudgeS3:
+    """judgments/ への条件付き書き込みを真似る。exotic_edge/ は固定の行。"""
+
+    def __init__(self, rows, store=None):
+        self.rows = rows
+        self.store = dict(store or {})
+        self.puts = 0
+
+    def list_objects_v2(self, **kw):
+        return {"Contents": [{"Key": "exotic_edge/20261020.json"}],
+                "IsTruncated": False}
+
+    def get_object(self, Bucket, Key):
+        import json as _json
+        if Key.startswith("judgments/"):
+            if Key not in self.store:
+                raise _ClientError("NoSuchKey")
+            body = self.store[Key]
+        else:
+            body = _json.dumps({"rows": self.rows}).encode()
+        return {"Body": type("B", (), {"read": staticmethod(lambda: body)})()}
+
+    def put_object(self, Bucket, Key, Body, IfNoneMatch=None, **kw):
+        self.puts += 1
+        if IfNoneMatch == "*" and Key in self.store:
+            raise _ClientError("PreconditionFailed")
+        self.store[Key] = Body
+
+
+def _wide_rows(n, hits, odds=60.0):
+    from ingest.exotic import exotic_threshold
+    t = exotic_threshold("wide")
+    return ([{"kind": "wide", "hit": True, "odds": odds, "edge": t}] * hits
+            + [{"kind": "wide", "hit": False, "odds": odds, "edge": t}]
+            * (n - hits))
+
+
+def _must_not_read(*a):
+    raise AssertionError("判定済みなのにログを読んだ")
+
+
+def test_judge_writes_once_and_second_run_does_not_recompute(
+        monkeypatch, capsys):
+    """**2 回目は計算しない。** 1 回目の記録をそのまま返す。"""
+    import json as _json
+    from ingest.tools import judge_exotic_edge as J
+
+    s3 = _JudgeS3(_wide_rows(500, 10))
+    monkeypatch.setattr(J, "_get_s3", lambda: s3)
+    assert J.main(["--kind", "wide", "--bucket", "b"]) == 0
+    first = _json.loads(capsys.readouterr().out)
+    assert first["n"] == 500 and first["verdict"] == "効果あり"
+    assert J.judgment_key("wide") in s3.store
+
+    # 行が増えて率が変わっても、2 回目は新しい数字を出さない
+    s3.rows = _wide_rows(800, 10)
+    monkeypatch.setattr(J, "load_rows", _must_not_read)
+    assert J.main(["--kind", "wide", "--bucket", "b"]) == 0
+    second = _json.loads(capsys.readouterr().out)
+    assert second == first
+    assert s3.puts == 1
+
+
+def test_judge_loses_race_shows_winner(monkeypatch, capsys):
+    """**読んだ後に別の実行が書いた場合も、先客の判定を返す。**"""
+    import json as _json
+    from ingest.tools import judge_exotic_edge as J
+
+    s3 = _JudgeS3(_wide_rows(500, 10))
+    winner = {"kind": "wide", "n": 501, "verdict": "効果なし"}
+    real_load = J.load_judgment
+    calls = []
+
+    def _load(bucket, kind):
+        calls.append(kind)
+        if len(calls) == 1:
+            # 最初の確認時点ではまだ無い。直後に先客が書く
+            s3.store[J.judgment_key(kind)] = _json.dumps(winner).encode()
+            return None
+        return real_load(bucket, kind)
+
+    monkeypatch.setattr(J, "_get_s3", lambda: s3)
+    monkeypatch.setattr(J, "load_judgment", _load)
+    assert J.main(["--kind", "wide", "--bucket", "b"]) == 0
+    assert _json.loads(capsys.readouterr().out) == winner
+
+
+def test_judge_does_not_print_when_save_fails(monkeypatch, capsys):
+    """**書けなければ表示しない。** 記録の無い判定を見ると、もう 1 回打てる。"""
+    from ingest.tools import judge_exotic_edge as J
+
+    class _Broken(_JudgeS3):
+        def put_object(self, **kw):
+            raise _ClientError("AccessDenied")
+
+    monkeypatch.setattr(J, "_get_s3", lambda: _Broken(_wide_rows(500, 10)))
+    with pytest.raises(_ClientError):
+        J.main(["--kind", "wide", "--bucket", "b"])
+    assert "payback" not in capsys.readouterr().out
+
+
+def test_umatan_is_already_judged(monkeypatch, capsys):
+    """**馬単は 2026-09-30 に判定済み。** judgments/ が無くても再判定させない。"""
+    import json as _json
+    from ingest.tools import judge_exotic_edge as J
+
+    s3 = _JudgeS3([])
+    monkeypatch.setattr(J, "_get_s3", lambda: s3)
+    assert J.main(["--kind", "umatan", "--bucket", "b"]) == 0
+    out = _json.loads(capsys.readouterr().out)
+    assert out["judged_at"] == "2026-09-30"
+    assert out["payback"] == 1.0736
+    from ingest.exotic import exotic_threshold
+    assert out["threshold"] == exotic_threshold("umatan")
+    assert s3.puts == 0
+
+
+def test_check_reports_judged_without_rate(monkeypatch, capsys):
+    import json as _json
+    from ingest.tools import judge_exotic_edge as J
+
+    monkeypatch.setattr(J, "_get_s3", lambda: _JudgeS3(_wide_rows(10, 1)))
+    assert J.main(["--kind", "wide", "--bucket", "b", "--check"]) == 0
+    out = _json.loads(capsys.readouterr().out)
+    assert out["judged"] is False
+    assert "payback" not in out
