@@ -142,7 +142,7 @@ aws events list-rules \
 
 | ルール | スケジュール | JST |
 |---|---|---|
-| `odds-resolver-morning-daily` | `cron(15 15 * * ? *)` | 0:15 翌日の器を作る |
+| `odds-resolver-morning-daily` | `cron(15 0,15-23 * * ? *)` | 0:15〜9:15 毎時。器を作る（完了印があれば何もしない・#175） |
 | `odds-resolver-fetch-minutely` | `rate(1 minute)` | 毎分 |
 | `odds-resolver-archive-nightly` | `cron(30 14 * * ? *)` | 23:30 当日を焼く |
 | `odds-resolver-archive-rebake` | `cron(30 17 * * ? *)` | 2:30 前日を再焼き（着順反映） |
