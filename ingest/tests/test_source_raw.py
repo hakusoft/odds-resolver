@@ -74,3 +74,17 @@ def test_no_bucket_no_save(monkeypatch):
     _setup(monkeypatch, s3, bucket=None)
     source.fetch("/x")
     assert s3.puts == []
+
+
+def test_client_has_short_timeout_and_no_retry(monkeypatch):
+    """**S3 が詰まっても fetch（timeout 55 秒）を道連れにしない。**"""
+    import boto3
+    seen = {}
+    monkeypatch.setattr(boto3, "client",
+                        lambda name, config=None: seen.update(c=config) or _S3())
+    monkeypatch.setenv("RAW_BUCKET", "b")
+    monkeypatch.setattr(source, "_s3", None)
+    source._save_raw("/x", "body")
+    c = seen["c"]
+    assert c.connect_timeout + c.read_timeout < 10
+    assert c.retries["max_attempts"] == 1

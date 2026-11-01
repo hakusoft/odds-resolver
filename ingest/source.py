@@ -56,7 +56,13 @@ def _save_raw(path: str, body: str):
     try:
         if _s3 is None:
             import boto3
-            _s3 = boto3.client("s3")
+            from botocore.config import Config
+            # **短いタイムアウト・リトライ無し。** 既定（接続 60 秒・数回の
+            # リトライ）だと S3 が詰まったとき fetch（timeout 55 秒）が
+            # オッズを書く前にここで打ち切られる。原本は 1 枚落ちても困らない
+            _s3 = boto3.client("s3", config=Config(
+                connect_timeout=3, read_timeout=5,
+                retries={"max_attempts": 1, "mode": "standard"}))
         _s3.put_object(
             Bucket=bucket, Key=raw_key(path, time.time()),
             Body=gzip.compress(body.encode("utf-8")),
